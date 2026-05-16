@@ -1,0 +1,14 @@
+{
+  "name": "ai-investment-assistant",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter web build",
+    "test": "pnpm --filter web test && make test-go && make test-agent",
+    "lint": "pnpm --filter web lint",
+    "dev:web": "pnpm --filter web dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "packageManager": "pnpm@10.0.0"
+}
