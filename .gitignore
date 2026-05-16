@@ -1,0 +1,30 @@
+.DS_Store
+
+# Environment files
+.env
+.env.local
+*.local
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+coverage/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Generated code
+backend/gen/
+services/agent/app/gen/
+
+# Logs and temporary files
+log/
+logs/
+*.log
+tmp/
