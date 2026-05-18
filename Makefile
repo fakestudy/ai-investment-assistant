@@ -1,7 +1,9 @@
+BUF ?= buf
+
 .PHONY: proto test-go test-agent compose-up compose-down migrate
 
 proto:
-	buf generate
+	$(BUF) generate
 
 test-go:
 	cd backend && go test ./...

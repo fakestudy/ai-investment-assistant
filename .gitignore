@@ -19,9 +19,8 @@ coverage/
 __pycache__/
 *.pyc
 
-# Generated code
-backend/gen/
-services/agent/app/gen/
+# Generated protobuf code is committed.
+# Keep backend/gen/go/ and agent/app/gen/ tracked.
 
 # Logs and temporary files
 log/
