@@ -1,12 +1,16 @@
 BUF ?= buf
 GO ?= go
+PNPM ?= pnpm
 PYTHON ?= python3
 PROTO_FILES := proto/investment/v1/agent.proto
 TOOLS_BIN := $(CURDIR)/.tools/bin
+CACHE_DIR := $(CURDIR)/.cache
 
 export PATH := $(TOOLS_BIN):$(PATH)
+export GOCACHE ?= $(CACHE_DIR)/go-build
+export GOMODCACHE ?= $(CACHE_DIR)/go-mod
 
-.PHONY: proto proto-tools test-go test-agent compose-up compose-down migrate
+.PHONY: proto proto-tools test-go test-agent test-backend test-fronted check-chat-slice compose-up compose-down migrate
 
 proto:
 	$(BUF) generate
@@ -18,10 +22,20 @@ proto-tools:
 	GOBIN=$(TOOLS_BIN) $(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
 
 test-go:
-	cd backend && go test ./...
+	mkdir -p $(GOCACHE) $(GOMODCACHE)
+	cd backend && $(GO) test ./...
 
 test-agent:
-	cd agent && python -m pytest -q
+	cd agent && $(PYTHON) -m pytest -q
+
+test-backend:
+	mkdir -p $(GOCACHE) $(GOMODCACHE)
+	cd backend && $(GO) test ./...
+
+test-fronted:
+	cd fronted && $(PNPM) check
+
+check-chat-slice: proto test-agent test-backend test-fronted
 
 compose-up:
 	docker compose --env-file .env.example -f infra/docker-compose.yml up --build
