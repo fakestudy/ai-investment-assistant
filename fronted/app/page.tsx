@@ -3,12 +3,11 @@ import {
   BrainCircuit,
   LineChart,
   Search,
-  Send,
   ShieldCheck,
-  Square,
   Star,
   TrendingUp,
 } from "lucide-react";
+import { ChatPanel } from "@/features/ai/ChatPanel";
 
 export default function Home() {
   return (
@@ -46,41 +45,7 @@ export default function Home() {
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)_minmax(240px,300px)] lg:px-8">
-        <section className="flex min-h-[560px] flex-col rounded-lg border border-zinc-200 bg-white">
-          <div className="border-b border-zinc-200 px-4 py-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-              <BrainCircuit className="size-4 text-emerald-700" />
-              AI 对话
-            </div>
-          </div>
-          <div className="flex flex-1 flex-col gap-3 p-4">
-            <div className="max-w-[85%] rounded-lg bg-zinc-100 px-3 py-2 text-sm leading-6 text-zinc-700">
-              今天可以先从自选股风险、财报变化或宏观事件切入。
-            </div>
-            <div className="mt-auto rounded-lg border border-zinc-200 bg-zinc-50 p-2">
-              <textarea
-                className="min-h-24 w-full resize-none bg-transparent p-2 text-sm outline-none placeholder:text-zinc-400"
-                placeholder="输入你想追问的股票或事件"
-              />
-              <div className="flex items-center justify-between border-t border-zinc-200 px-2 pt-2">
-                <button
-                  className="inline-flex size-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100"
-                  type="button"
-                  aria-label="停止回答"
-                >
-                  <Square className="size-4" aria-hidden="true" />
-                </button>
-                <button
-                  className="inline-flex items-center gap-2 rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800"
-                  type="button"
-                >
-                  <Send className="size-4" aria-hidden="true" />
-                  发送
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
+        <ChatPanel />
 
         <section className="min-h-[560px] rounded-lg border border-zinc-200 bg-white">
           <div className="border-b border-zinc-200 px-4 py-3">
