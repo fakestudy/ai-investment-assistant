@@ -10,7 +10,7 @@ export PATH := $(TOOLS_BIN):$(PATH)
 export GOCACHE ?= $(CACHE_DIR)/go-build
 export GOMODCACHE ?= $(CACHE_DIR)/go-mod
 
-.PHONY: proto proto-tools test-go test-agent test-backend test-fronted check-chat-slice compose-up compose-down migrate
+.PHONY: proto proto-tools test-go test-agent test-backend test-fronted test-dev-scripts check-chat-slice compose-up compose-down migrate dev-start dev-stop
 
 proto:
 	$(BUF) generate
@@ -35,7 +35,11 @@ test-backend:
 test-fronted:
 	cd fronted && $(PNPM) check
 
-check-chat-slice: proto test-agent test-backend test-fronted
+test-dev-scripts:
+	bash script/tests/test-env-loader.sh
+	bash script/tests/test-dev-start-bff-launch.sh
+
+check-chat-slice: proto test-agent test-backend test-fronted test-dev-scripts
 
 compose-up:
 	docker compose --env-file .env.example -f infra/docker-compose.yml up --build
@@ -45,3 +49,9 @@ compose-down:
 
 migrate:
 	psql "$$DATABASE_URL" -f backend/db/migrations/0001_init.sql
+
+dev-start:
+	bash ./script/start-dev.sh
+
+dev-stop:
+	bash ./script/stop-dev.sh

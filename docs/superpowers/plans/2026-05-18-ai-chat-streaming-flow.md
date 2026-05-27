@@ -1639,7 +1639,7 @@ git commit -m "feat: add frontend chat stream client"
 
 Create `fronted/features/ai/ChatPanel.test.tsx`:
 
-```typescript
+```tsx
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -1684,7 +1684,7 @@ Expected: FAIL because `ChatPanel.tsx` does not exist.
 
 Create `fronted/features/ai/ChatPanel.tsx`:
 
-```typescript
+```tsx
 "use client";
 
 import { Send, Square } from "lucide-react";

@@ -2865,7 +2865,7 @@ export function Disclaimer() {
 
 测试名称：
 
-```ts
+```text
 it('shows login form before authentication')
 it('renders desktop three-column workbench')
 it('renders research disclaimer on cards')

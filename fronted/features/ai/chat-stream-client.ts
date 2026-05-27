@@ -3,7 +3,7 @@ import { parseChatStreamEvent } from "./chat-event-parser";
 import type { ChatStreamEvent, ChatStreamRequest } from "./types";
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8081";
 
 export type StartChatStreamOptions = {
   request: ChatStreamRequest;

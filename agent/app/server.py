@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 import asyncio
 
 import grpc
+import truststore
 
 from app.config import load_settings
 from app.graphs.question_answer import QuestionAnswerGraph, QuestionInput
@@ -75,6 +76,7 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
 
 
 async def serve() -> None:
+    truststore.inject_into_ssl()
     settings = load_settings()
     provider = DeepSeekProvider(
         api_key=settings.deepseek_api_key,

@@ -21,9 +21,18 @@ func main() {
 	}
 	defer conn.Close()
 
+	httpAddr := bffHTTPAddr()
 	server := bff.NewServer(bff.NewAgentGRPCClient(conn))
-	log.Println("BFF listening on :8080")
-	if err := http.ListenAndServe(":8080", server); err != nil {
+	log.Printf("BFF listening on %s", httpAddr)
+	if err := http.ListenAndServe(httpAddr, server); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func bffHTTPAddr() string {
+	httpAddr := os.Getenv("BFF_HTTP_ADDR")
+	if httpAddr == "" {
+		return ":8081"
+	}
+	return httpAddr
 }

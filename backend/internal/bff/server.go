@@ -16,6 +16,10 @@ type Server struct {
 
 func NewServer(agent AgentStreamClient) *Server {
 	s := &Server{router: chi.NewRouter(), agent: agent}
+	s.router.Use(corsMiddleware)
+	s.router.Options("/*", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	s.router.Post("/api/chat/stream", s.handleChatStream)
 	s.router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -26,6 +30,28 @@ func NewServer(agent AgentStreamClient) *Server {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if isAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isAllowedOrigin(origin string) bool {
+	switch origin {
+	case "http://localhost:3000", "http://127.0.0.1:3000":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
