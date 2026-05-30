@@ -137,6 +137,9 @@ func TestDeepSeekCompatibleStreamExecutesToolCalls(t *testing.T) {
 	if collected[1].Kind != "tool_result" || collected[1].ToolError != "" {
 		t.Fatalf("second event = %+v, want successful tool_result", collected[1])
 	}
+	if collected[0].ToolCallID == "" || collected[1].ToolCallID != collected[0].ToolCallID {
+		t.Fatalf("tool call IDs = call %q, result %q; want identical fallback ToolCallID", collected[0].ToolCallID, collected[1].ToolCallID)
+	}
 	result, ok := collected[1].ToolResult.(map[string]any)
 	if !ok {
 		t.Fatalf("tool result type = %T, want map[string]any", collected[1].ToolResult)

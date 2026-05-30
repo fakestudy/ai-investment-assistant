@@ -320,7 +320,7 @@ func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTool
 		resultContent := mustJSONString(result)
 		resultEvent := Event{
 			Kind:       "tool_result",
-			ToolCallID: pending.id,
+			ToolCallID: toolCallID,
 			ToolName:   pending.name,
 			ToolArgs:   args,
 			ToolResult: result,
