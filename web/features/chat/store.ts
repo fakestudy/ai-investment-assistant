@@ -559,11 +559,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			set((state) => ({
 				messagesByConversationId: {
 					...state.messagesByConversationId,
-					[conversationId]: updateMessage(
-						state.messagesByConversationId[conversationId] ?? [],
-						messageId,
-						() => message,
-					),
+					[conversationId]: (
+						state.messagesByConversationId[conversationId] ?? []
+					)
+						.slice(
+							0,
+							(state.messagesByConversationId[conversationId] ?? []).findIndex(
+								(currentMessage) => currentMessage.id === messageId,
+							) + 1,
+						)
+						.map((currentMessage) =>
+							currentMessage.id === messageId ? message : currentMessage,
+						),
 				},
 			}));
 
