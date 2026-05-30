@@ -4,12 +4,14 @@ import (
 	"net/http"
 	"strings"
 
+	"ai-investment-assistant/backend/internal/chat"
 	"ai-investment-assistant/backend/internal/conversation"
 	"github.com/gin-gonic/gin"
 )
 
 type Router struct {
 	conversations *conversation.Service
+	chats         *chat.Service
 }
 
 type renameConversationRequest struct {
@@ -20,8 +22,12 @@ type editMessageRequest struct {
 	Content string `json:"content"`
 }
 
-func NewRouter(conversations *conversation.Service) *gin.Engine {
-	handler := &Router{conversations: conversations}
+func NewRouter(conversations *conversation.Service, chatServices ...*chat.Service) *gin.Engine {
+	chats := chat.NewService(conversations, chat.EchoAgent{})
+	if len(chatServices) > 0 && chatServices[0] != nil {
+		chats = chatServices[0]
+	}
+	handler := &Router{conversations: conversations, chats: chats}
 	router := gin.New()
 	router.Use(gin.Recovery())
 
@@ -33,6 +39,7 @@ func NewRouter(conversations *conversation.Service) *gin.Engine {
 	api.DELETE("/conversations/:conversationId", handler.deleteConversation)
 	api.GET("/conversations/:conversationId/messages", handler.listMessages)
 	api.PATCH("/messages/:messageId", handler.editMessage)
+	api.POST("/chat/stream", handler.streamChat)
 
 	return router
 }
@@ -125,6 +132,26 @@ func (r *Router) editMessage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, edited)
+}
+
+func (r *Router) streamChat(c *gin.Context) {
+	var request chat.StreamChatRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		respondBadRequest(c, "invalid JSON")
+		return
+	}
+
+	events, err := r.chats.Stream(c.Request.Context(), request)
+	if err != nil {
+		if chat.IsValidation(err) {
+			respondBadRequest(c, chat.ValidationMessage(err))
+			return
+		}
+		respondError(c, err)
+		return
+	}
+
+	writeSSEEvents(c.Writer, c.Request, events)
 }
 
 func (r *Router) conversationExists(c *gin.Context, conversationID string) (bool, error) {

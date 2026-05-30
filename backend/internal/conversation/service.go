@@ -56,6 +56,12 @@ type CreateMessageInput struct {
 	Status         string
 }
 
+type UpdateMessageInput struct {
+	Content   string
+	Reasoning string
+	Status    string
+}
+
 func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
@@ -162,6 +168,30 @@ func (s *Service) CreateMessage(ctx context.Context, input CreateMessageInput) (
 			return gorm.ErrRecordNotFound
 		}
 		return tx.Create(&row).Error
+	})
+	if err != nil {
+		return ChatMessage{}, err
+	}
+	return messageDTO(row), nil
+}
+
+func (s *Service) UpdateMessage(ctx context.Context, messageID string, input UpdateMessageInput) (ChatMessage, error) {
+	var row store.Message
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&row, "id = ?", messageID).Error; err != nil {
+			return err
+		}
+		row.Content = input.Content
+		row.Reasoning = input.Reasoning
+		if input.Status != "" {
+			row.Status = input.Status
+		}
+		if err := tx.Save(&row).Error; err != nil {
+			return err
+		}
+		return tx.Model(&store.Conversation{}).
+			Where("id = ?", row.ConversationID).
+			Update("updated_at", time.Now()).Error
 	})
 	if err != nil {
 		return ChatMessage{}, err

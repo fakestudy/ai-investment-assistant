@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"ai-investment-assistant/backend/internal/api"
+	"ai-investment-assistant/backend/internal/chat"
 	"ai-investment-assistant/backend/internal/config"
 	"ai-investment-assistant/backend/internal/conversation"
 	"ai-investment-assistant/backend/internal/store"
@@ -20,7 +21,8 @@ func main() {
 	}
 
 	conversationService := conversation.NewService(db)
-	router := api.NewRouter(conversationService)
+	chatService := chat.NewService(conversationService, chat.EchoAgent{})
+	router := api.NewRouter(conversationService, chatService)
 	if err := router.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("run server: %v", err)
 	}
