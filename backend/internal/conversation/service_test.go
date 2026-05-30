@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"ai-investment-assistant/backend/internal/store"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestServiceCreatesAndRenamesConversation(t *testing.T) {
@@ -129,10 +131,21 @@ func TestServiceEditsMessageAndDeletesFollowingMessages(t *testing.T) {
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 
-	db, err := store.OpenSQLite(t.Context(), ":memory:")
+	db, err := openSQLiteTestDB(t.Context(), ":memory:")
 	if err != nil {
-		t.Fatalf("OpenSQLite() error = %v", err)
+		t.Fatalf("openSQLiteTestDB() error = %v", err)
 	}
 
 	return NewService(db)
+}
+
+func openSQLiteTestDB(ctx context.Context, dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+	if err := store.AutoMigrate(ctx, db); err != nil {
+		return nil, err
+	}
+	return db, nil
 }
