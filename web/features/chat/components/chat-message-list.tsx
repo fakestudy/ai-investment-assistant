@@ -28,7 +28,10 @@ export function ChatMessageList() {
 
 	if (isLoadingMessages) {
 		return (
-			<div className="flex flex-1 items-center justify-center px-6 text-zinc-500 text-sm">
+			<div
+				aria-live="polite"
+				className="flex flex-1 items-center justify-center px-6 text-zinc-500 text-sm"
+			>
 				Loading messages...
 			</div>
 		);

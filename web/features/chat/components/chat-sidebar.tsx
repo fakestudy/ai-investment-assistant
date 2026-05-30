@@ -108,22 +108,31 @@ export function ChatSidebar() {
 				New chat
 			</button>
 			<nav className="mt-4 flex flex-1 flex-col gap-1 overflow-y-auto">
-				{conversations.map((conversation) => (
-					<ConversationRow
-						conversation={conversation}
-						isActive={conversation.id === activeConversationId}
-						key={conversation.id}
-						onDelete={() => {
-							setIsDeleteDialogOpen(true);
-						}}
-						onRename={() => {
-							setIsRenameDialogOpen(true);
-						}}
-						onSelect={() => {
-							void selectConversation(conversation.id);
-						}}
-					/>
-				))}
+				{isLoadingConversations ? (
+					<div
+						aria-live="polite"
+						className="rounded-lg px-2 py-2 text-sm text-zinc-500"
+					>
+						Loading chats...
+					</div>
+				) : (
+					conversations.map((conversation) => (
+						<ConversationRow
+							conversation={conversation}
+							isActive={conversation.id === activeConversationId}
+							key={conversation.id}
+							onDelete={() => {
+								setIsDeleteDialogOpen(true);
+							}}
+							onRename={() => {
+								setIsRenameDialogOpen(true);
+							}}
+							onSelect={() => {
+								void selectConversation(conversation.id);
+							}}
+						/>
+					))
+				)}
 			</nav>
 			<RenameConversationDialog
 				conversation={activeConversation}
