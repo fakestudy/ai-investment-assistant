@@ -50,7 +50,7 @@
 Go 框架:     Gin
 ORM:         GORM
 数据库:      PostgreSQL + pgvector (镜像建议: pgvector/pgvector:pg16)
-Python 框架: FastAPI
+Python 服务: 纯 gRPC server（grpcio + grpcio-tools，不引入 FastAPI/HTTP 框架）
 Agent 编排:  LangGraph
 通信:        gRPC（Day 1 就上，使用 protobuf）
 容器化:      Docker + Docker Compose
@@ -200,11 +200,11 @@ ai-investment-assistant/
 |------|---------|--------|
 | **A 档（核心，纯手写）** | DataSource interface、LangGraph state 设计、Go 错误处理风格、gRPC service 定义 | **自己手写**，AI 只能问概念 |
 | **B 档（重要，AI 起草 + 逐行重写）** | Gin handler、GORM model、PDF 解析、prompt 设计、报告模板 | **AI 起草，你重写一遍**，禁止粘贴 |
-| **C 档（样板，AI 直接生成）** | docker-compose、Next.js 页面骨架、CRUD 第一版、单测样板、proto 首版 | **AI 直接写**，跑通即可 |
+| **C 档（样板，AI 直接生成）** | docker-compose、Next.js 页面骨架、CRUD 第一版、单测样板、proto 首版、**前端全部代码（已 4 年经验，不再是学习目标）** | **AI 直接写**，跑通即可 |
 
 ### 9.2 五条铁律
 
-1. 每个模块**第一次**写时强制 A/B 档，建立肌肉记忆后才允许 C 档。
+1. 每个模块**第一次**写时强制 A/B 档，建立肌肉记忆后才允许 C 档（**前端除外，已 4 年经验，全部交给 AI**）。
 2. **debug 不许全交给 AI**：自己看 5-10 分钟形成假设，再带假设去问 AI。
 3. **每周日做"复述测试"**：随机挑本周一个模块，关掉 AI 重写一遍。
 4. **AI 是 rubber duck + 文档检索器**，不是代码生产者。

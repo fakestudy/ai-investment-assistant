@@ -7,7 +7,10 @@ import {
 	ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { useChatStore } from "../store";
+import type { ChatMessage } from "../types";
 import { ChatMessageItem } from "./chat-message-item";
+
+const EMPTY_MESSAGES: ChatMessage[] = [];
 
 export function ChatMessageList() {
 	const activeConversationId = useChatStore(
@@ -15,8 +18,8 @@ export function ChatMessageList() {
 	);
 	const messages = useChatStore((state) =>
 		activeConversationId
-			? (state.messagesByConversationId[activeConversationId] ?? [])
-			: [],
+			? (state.messagesByConversationId[activeConversationId] ?? EMPTY_MESSAGES)
+			: EMPTY_MESSAGES,
 	);
 	const isLoadingMessages = useChatStore((state) => state.isLoadingMessages);
 	const editUserMessageAndRegenerate = useChatStore(
