@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -373,6 +374,19 @@ func TestServiceListMessagesIncludesToolInvocations(t *testing.T) {
 	}
 	if invocation.Status != "complete" {
 		t.Fatalf("ToolInvocation.Status = %q, want %q", invocation.Status, "complete")
+	}
+
+	payload, err := json.Marshal(messages[0])
+	if err != nil {
+		t.Fatalf("json.Marshal(message) error = %v", err)
+	}
+	wantJSON := `"args":{"query":"AI stocks"}`
+	if !strings.Contains(string(payload), wantJSON) {
+		t.Fatalf("marshaled message = %s, want args as JSON object containing %s", payload, wantJSON)
+	}
+	wantJSON = `"result":{"items":[{"title":"Result"}]}`
+	if !strings.Contains(string(payload), wantJSON) {
+		t.Fatalf("marshaled message = %s, want result as JSON object containing %s", payload, wantJSON)
 	}
 }
 

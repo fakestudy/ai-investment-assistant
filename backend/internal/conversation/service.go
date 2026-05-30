@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -36,15 +37,15 @@ type ChatMessage struct {
 }
 
 type ToolInvocation struct {
-	ID        string    `json:"id"`
-	MessageID string    `json:"messageId"`
-	ToolName  string    `json:"toolName"`
-	Args      []byte    `json:"args,omitempty"`
-	Result    []byte    `json:"result,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	LatencyMS int64     `json:"latencyMs"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID        string          `json:"id"`
+	MessageID string          `json:"messageId"`
+	ToolName  string          `json:"toolName"`
+	Args      json.RawMessage `json:"args,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	LatencyMS int64           `json:"latencyMs"`
+	Status    string          `json:"status"`
+	CreatedAt time.Time       `json:"createdAt"`
 }
 
 type CreateMessageInput struct {
@@ -234,8 +235,8 @@ func toolInvocationDTO(row store.ToolInvocation) ToolInvocation {
 		ID:        row.ID,
 		MessageID: row.MessageID,
 		ToolName:  row.ToolName,
-		Args:      []byte(row.Args),
-		Result:    []byte(row.Result),
+		Args:      json.RawMessage(row.Args),
+		Result:    json.RawMessage(row.Result),
 		Error:     row.Error,
 		LatencyMS: row.LatencyMS,
 		Status:    row.Status,
