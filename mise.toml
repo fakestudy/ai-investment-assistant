@@ -1,0 +1,8 @@
+[tools]
+node = "22.22.2"
+go = "1.26.2"
+buf = "1.69.0"
+
+[tasks.doctor]
+description = "Print the tool versions expected by this project"
+run = "node --version && pnpm --version && go version && python3 --version && buf --version"

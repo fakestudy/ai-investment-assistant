@@ -1,0 +1,37 @@
+.DS_Store
+
+# Environment files
+.env
+.env.local
+*.local
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+coverage/
+.tools/
+.cache/
+.worktrees/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Generated protobuf code is committed.
+# Keep backend/gen/go/ and agent/app/gen/ tracked.
+
+# Logs and temporary files
+log/
+logs/
+*.log
+tmp/
+.superpowers/
+.run/
