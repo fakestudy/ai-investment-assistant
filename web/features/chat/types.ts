@@ -9,11 +9,12 @@ export type Conversation = {
 
 export type MessageStatus = "idle" | "streaming" | "done" | "error";
 export type ToolInvocationStatus = "running" | "completed" | "error";
+export type ToolName = "web_search" | "fetch_url" | (string & {});
 
 export type ToolInvocation = {
 	id: string;
 	messageId: string;
-	toolName: "web_search" | "fetch_url" | string;
+	toolName: ToolName;
 	args: Record<string, unknown>;
 	result?: unknown;
 	error?: string;
