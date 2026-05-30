@@ -185,6 +185,50 @@ func TestServiceReadsAgentErrorsWithoutWaitingForEventsToClose(t *testing.T) {
 	}
 }
 
+func TestServiceWaitsForFinalAgentErrorAfterEventsClose(t *testing.T) {
+	ctx := context.Background()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	agent := newDelayedFinalErrorAgent(errors.New("final stream error"))
+	svc := NewService(conversations, agent)
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID: created.ID,
+		Message:        "Trigger delayed final error",
+	})
+	if err != nil {
+		t.Fatalf("Stream() setup error = %v", err)
+	}
+
+	first := <-events
+	if first.Type != "message_created" {
+		t.Fatalf("first event type = %q, want message_created", first.Type)
+	}
+	waitForSignal(t, agent.eventsClosed, "agent events to close")
+	assertNoEventBeforeFinalError(t, events)
+	agent.releaseError()
+
+	collected := append([]StreamEvent{first}, collectEventsWithin(t, events, 500*time.Millisecond)...)
+	assertEventTypes(t, collected, []string{"message_created", "error"})
+	if collected[1].Text != "final stream error" {
+		t.Fatalf("error event text = %q, want final stream error", collected[1].Text)
+	}
+
+	messages, err := conversations.ListMessages(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("ListMessages() len = %d, want 2", len(messages))
+	}
+	if messages[1].Status != "error" {
+		t.Fatalf("assistant status = %q, want error", messages[1].Status)
+	}
+}
+
 func TestServiceRegeneratesFromMessageWithEmptyPrompt(t *testing.T) {
 	ctx := context.Background()
 	conversations := newTestConversationService(t)
@@ -329,6 +373,41 @@ func (a nonClosingErrorAgent) Stream(ctx context.Context, messages []AgentMessag
 	return events, errs
 }
 
+type delayedFinalErrorAgent struct {
+	err          error
+	eventsClosed chan struct{}
+	release      chan struct{}
+}
+
+func newDelayedFinalErrorAgent(err error) *delayedFinalErrorAgent {
+	return &delayedFinalErrorAgent{
+		err:          err,
+		eventsClosed: make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+}
+
+func (a *delayedFinalErrorAgent) Stream(ctx context.Context, messages []AgentMessage) (<-chan AgentEvent, <-chan error) {
+	events := make(chan AgentEvent)
+	errs := make(chan error, 1)
+	go func() {
+		close(events)
+		close(a.eventsClosed)
+		select {
+		case <-ctx.Done():
+			errs <- ctx.Err()
+		case <-a.release:
+			errs <- a.err
+		}
+		close(errs)
+	}()
+	return events, errs
+}
+
+func (a *delayedFinalErrorAgent) releaseError() {
+	close(a.release)
+}
+
 type capturingAgent struct {
 	events   []AgentEvent
 	messages []AgentMessage
@@ -383,6 +462,33 @@ func waitForClosedEvents(t *testing.T, events <-chan StreamEvent) {
 		case <-timer.C:
 			t.Fatal("timed out waiting for stream events to close after cancellation")
 		}
+	}
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, label string) {
+	t.Helper()
+
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-signal:
+	case <-timer.C:
+		t.Fatalf("timed out waiting for %s", label)
+	}
+}
+
+func assertNoEventBeforeFinalError(t *testing.T, events <-chan StreamEvent) {
+	t.Helper()
+
+	timer := time.NewTimer(25 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case event, ok := <-events:
+		if !ok {
+			t.Fatal("stream closed before final agent error")
+		}
+		t.Fatalf("received event before final agent error: %+v", event)
+	case <-timer.C:
 	}
 }
 

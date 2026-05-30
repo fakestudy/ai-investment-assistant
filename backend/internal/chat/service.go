@@ -143,8 +143,7 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 	agentEvents, agentErrors := s.agent.Stream(ctx, []AgentMessage{{Role: "user", Content: prompt}})
 	var content strings.Builder
 	var reasoning strings.Builder
-	eventsOpen := true
-	for eventsOpen {
+	for agentEvents != nil || agentErrors != nil {
 		select {
 		case <-ctx.Done():
 			s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
@@ -160,7 +159,7 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 			}
 		case event, ok := <-agentEvents:
 			if !ok {
-				eventsOpen = false
+				agentEvents = nil
 				continue
 			}
 			if !s.handleAgentEvent(ctx, output, assistant.ID, event, &content, &reasoning) {
@@ -168,16 +167,6 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 				return
 			}
 		}
-	}
-
-	select {
-	case err, ok := <-agentErrors:
-		if ok && err != nil {
-			s.finalizeError(ctx, assistant.ID, content.String(), reasoning.String(), err)
-			_ = sendEvent(ctx, output, StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
-			return
-		}
-	default:
 	}
 
 	if _, err := s.conversations.UpdateMessage(context.WithoutCancel(ctx), assistant.ID, conversation.UpdateMessageInput{

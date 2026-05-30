@@ -55,6 +55,9 @@ type AgentEvent struct {
 	Invocation *ToolInvocation
 }
 
+// Agent implementations must eventually close both returned channels.
+// The error channel closes after the final error is sent, or without a value
+// when the stream completed successfully.
 type Agent interface {
 	Stream(ctx context.Context, messages []AgentMessage) (<-chan AgentEvent, <-chan error)
 }
