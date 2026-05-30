@@ -16,6 +16,7 @@ build/
 coverage/
 .tools/
 .cache/
+.worktrees/
 
 # Python
 .venv/
