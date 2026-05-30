@@ -326,6 +326,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				activeConversationId,
 				isLoadingConversations: false,
 			});
+
+			if (activeConversationId) {
+				await get().selectConversation(activeConversationId);
+			}
 		} catch (error) {
 			set({
 				isLoadingConversations: false,
@@ -445,6 +449,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 							: state.abortController,
 				};
 			});
+
+			const nextConversationId = get().activeConversationId;
+
+			if (nextConversationId) {
+				await get().selectConversation(nextConversationId);
+			}
 		} catch (error) {
 			set({ error: toChatError(error, "conversation") });
 		}
