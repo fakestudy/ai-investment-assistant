@@ -1,6 +1,7 @@
 "use client";
 
 import { SendHorizontalIcon, SquareIcon } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
 import { type KeyboardEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +12,8 @@ export function ChatInput() {
 	const isStreaming = useChatStore((state) => state.isStreaming);
 	const sendMessage = useChatStore((state) => state.sendMessage);
 	const stopStreaming = useChatStore((state) => state.stopStreaming);
+	const pathname = usePathname();
+	const router = useRouter();
 
 	const trimmedDraft = draft.trim();
 	const canSend = trimmedDraft.length > 0 && !isStreaming;
@@ -22,7 +25,11 @@ export function ChatInput() {
 
 		const nextMessage = trimmedDraft;
 		setDraft("");
-		void sendMessage(nextMessage);
+		void sendMessage(nextMessage).then((conversationId) => {
+			if (pathname === "/chat" && conversationId) {
+				router.replace(`/chat/${encodeURIComponent(conversationId)}`);
+			}
+		});
 	};
 
 	const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {

@@ -18,20 +18,20 @@ func TestLoadUsesDefaults(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.Port != "8080" {
-		t.Fatalf("Port = %q, want %q", cfg.Port, "8080")
+	if cfg.Port != "8081" {
+		t.Fatalf("Port = %q, want %q", cfg.Port, "8081")
 	}
-	if cfg.DatabaseURL != "postgres://postgres:postgres@localhost:5432/ai_assistant?sslmode=disable" {
+	if cfg.DatabaseURL != "postgres://investment:investment@postgres:5432/investment?sslmode=disable" {
 		t.Fatalf("DatabaseURL = %q", cfg.DatabaseURL)
 	}
 	if cfg.DeepSeekBaseURL != "https://api.deepseek.com" {
 		t.Fatalf("DeepSeekBaseURL = %q", cfg.DeepSeekBaseURL)
 	}
-	if cfg.DeepSeekModel != "deepseek-chat" {
+	if cfg.DeepSeekModel != "deepseek-v4-pro" {
 		t.Fatalf("DeepSeekModel = %q", cfg.DeepSeekModel)
 	}
-	if cfg.HTTPClientTimeout != 30*time.Second {
-		t.Fatalf("HTTPClientTimeout = %s, want %s", cfg.HTTPClientTimeout, 30*time.Second)
+	if cfg.HTTPClientTimeout != 60*time.Second {
+		t.Fatalf("HTTPClientTimeout = %s, want %s", cfg.HTTPClientTimeout, 60*time.Second)
 	}
 }
 

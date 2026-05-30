@@ -1,5 +1,5 @@
-import { ChatShell } from "@/features/chat/components/chat-shell";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-	return <ChatShell />;
+	redirect("/chat");
 }

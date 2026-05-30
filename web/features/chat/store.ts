@@ -29,10 +29,11 @@ type ChatState = {
 	abortController?: AbortController;
 	loadConversations: () => Promise<void>;
 	createNewConversation: () => Promise<void>;
+	clearActiveConversation: () => void;
 	selectConversation: (conversationId: string) => Promise<void>;
 	renameActiveConversation: (title: string) => Promise<void>;
 	deleteActiveConversation: () => Promise<void>;
-	sendMessage: (content: string) => Promise<void>;
+	sendMessage: (content: string) => Promise<string | undefined>;
 	stopStreaming: () => void;
 	regenerateLastAssistantMessage: () => Promise<void>;
 	editUserMessageAndRegenerate: (
@@ -319,7 +320,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					(conversation) => conversation.id === get().activeConversationId,
 				)
 					? get().activeConversationId
-					: conversations[0]?.id;
+					: undefined;
 
 			set({
 				conversations,
@@ -355,6 +356,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} catch (error) {
 			set({ error: toChatError(error, "conversation") });
 		}
+	},
+
+	clearActiveConversation: () => {
+		set({
+			activeConversationId: undefined,
+			error: undefined,
+			isLoadingMessages: false,
+		});
 	},
 
 	selectConversation: async (conversationId) => {
@@ -464,7 +473,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const message = content.trim();
 
 		if (!message) {
-			return;
+			return undefined;
 		}
 
 		let conversationId = get().activeConversationId;
@@ -484,7 +493,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				}));
 			} catch (error) {
 				set({ error: toChatError(error, "conversation") });
-				return;
+				return undefined;
 			}
 		}
 
@@ -499,7 +508,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			},
 		}));
 
-		await startStream({ conversationId, message }, set, get);
+		void startStream({ conversationId, message }, set, get);
+		return conversationId;
 	},
 
 	stopStreaming: () => {

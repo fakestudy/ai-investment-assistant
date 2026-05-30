@@ -20,15 +20,15 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		Port:              getEnv("PORT", "8080"),
-		DatabaseURL:       getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/ai_assistant?sslmode=disable"),
+		Port:              getEnv("BFF_HTTP_ADDR", "8081"),
+		DatabaseURL:       getEnv("DATABASE_URL", "postgres://investment:investment@postgres:5432/investment?sslmode=disable"),
 		DeepSeekAPIKey:    os.Getenv("DEEPSEEK_API_KEY"),
 		DeepSeekBaseURL:   getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-		DeepSeekModel:     getEnv("DEEPSEEK_MODEL", "deepseek-chat"),
+		DeepSeekModel:     getEnv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
 		SearchBaseURL:     os.Getenv("SEARCH_BASE_URL"),
 		FetchAllowPrivate: getEnvBool("FETCH_ALLOW_PRIVATE", false),
-		HTTPClientTimeout: time.Duration(getEnvInt("HTTP_CLIENT_TIMEOUT_SECONDS", 30)) * time.Second,
+		HTTPClientTimeout: time.Duration(getEnvInt("HTTP_CLIENT_TIMEOUT_SECONDS", 60)) * time.Second,
 	}
 }
 

@@ -138,10 +138,12 @@ func (a *DeepSeekAgent) streamDeepSeekOnce(ctx context.Context, messages []deepS
 		return nil, err
 	}
 	body := map[string]any{
-		"model":    a.cfg.DeepSeekModel,
-		"stream":   true,
-		"messages": messages,
-		"tools":    toolDefinitions(),
+		"model":            a.cfg.DeepSeekModel,
+		"stream":           true,
+		"messages":         messages,
+		"tools":            toolDefinitions(),
+		"reasoning_effort": "max",
+		"thinking":         map[string]any{"type": "enabled"},
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

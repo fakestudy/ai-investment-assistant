@@ -6,6 +6,7 @@ import {
 	PlusIcon,
 	Trash2Icon,
 } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useChatStore } from "../store";
 import type { Conversation } from "../types";
@@ -75,10 +76,9 @@ export function ChatSidebar() {
 	const activeConversationId = useChatStore(
 		(state) => state.activeConversationId,
 	);
-	const createNewConversation = useChatStore(
-		(state) => state.createNewConversation,
+	const clearActiveConversation = useChatStore(
+		(state) => state.clearActiveConversation,
 	);
-	const selectConversation = useChatStore((state) => state.selectConversation);
 	const isLoadingConversations = useChatStore(
 		(state) => state.isLoadingConversations,
 	);
@@ -93,6 +93,8 @@ export function ChatSidebar() {
 	);
 	const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const pathname = usePathname();
+	const router = useRouter();
 
 	return (
 		<aside className="flex w-[260px] shrink-0 flex-col border-zinc-200 border-r bg-zinc-50/95 p-3">
@@ -100,7 +102,12 @@ export function ChatSidebar() {
 				className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 font-medium text-sm text-zinc-900 shadow-sm transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
 				disabled={isLoadingConversations}
 				onClick={() => {
-					void createNewConversation();
+					if (pathname === "/chat" && !activeConversationId) {
+						return;
+					}
+
+					clearActiveConversation();
+					router.push("/chat");
 				}}
 				type="button"
 			>
@@ -128,7 +135,7 @@ export function ChatSidebar() {
 								setIsRenameDialogOpen(true);
 							}}
 							onSelect={() => {
-								void selectConversation(conversation.id);
+								router.push(`/chat/${encodeURIComponent(conversation.id)}`);
 							}}
 						/>
 					))
