@@ -24,6 +24,7 @@ type ChatState = {
 	isLoadingConversations: boolean;
 	isLoadingMessages: boolean;
 	isStreaming: boolean;
+	streamingConversationId?: string;
 	error?: ChatError;
 	abortController?: AbortController;
 	loadConversations: () => Promise<void>;
@@ -145,6 +146,7 @@ const reduceStreamEvent = (
 	if (event.type === "error") {
 		const nextState: Partial<ChatState> = {
 			isStreaming: false,
+			streamingConversationId: undefined,
 			abortController: undefined,
 			error: { message: event.message, scope: "stream" },
 		};
@@ -169,6 +171,13 @@ const reduceStreamEvent = (
 			: streamConversationId;
 
 	const messages = state.messagesByConversationId[conversationId] ?? [];
+
+	if (
+		event.type !== "message_created" &&
+		!(conversationId in state.messagesByConversationId)
+	) {
+		return {};
+	}
 
 	if (event.type === "message_created") {
 		return {
@@ -235,6 +244,7 @@ const reduceStreamEvent = (
 
 	return {
 		isStreaming: false,
+		streamingConversationId: undefined,
 		abortController: undefined,
 		messagesByConversationId: {
 			...state.messagesByConversationId,
@@ -259,6 +269,7 @@ const startStream = async (
 
 	set({
 		isStreaming: true,
+		streamingConversationId: request.conversationId,
 		abortController,
 		error: undefined,
 	});
@@ -274,6 +285,7 @@ const startStream = async (
 		if (!abortController.signal.aborted) {
 			set({
 				isStreaming: false,
+				streamingConversationId: undefined,
 				abortController: undefined,
 				error: toChatError(error, "stream"),
 			});
@@ -282,6 +294,7 @@ const startStream = async (
 		if (get().abortController === abortController) {
 			set({
 				isStreaming: false,
+				streamingConversationId: undefined,
 				abortController: undefined,
 			});
 		}
@@ -399,6 +412,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({ error: undefined });
 
 		try {
+			if (get().streamingConversationId === conversationId) {
+				get().abortController?.abort();
+			}
+
 			await deleteConversation(conversationId);
 
 			set((state) => {
@@ -414,6 +431,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					conversations,
 					activeConversationId: conversations[0]?.id,
 					messagesByConversationId,
+					isStreaming:
+						state.streamingConversationId === conversationId
+							? false
+							: state.isStreaming,
+					streamingConversationId:
+						state.streamingConversationId === conversationId
+							? undefined
+							: state.streamingConversationId,
+					abortController:
+						state.streamingConversationId === conversationId
+							? undefined
+							: state.abortController,
 				};
 			});
 		} catch (error) {
@@ -464,11 +493,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	stopStreaming: () => {
-		get().abortController?.abort();
-		set({
+		const { abortController, streamingConversationId } = get();
+		abortController?.abort();
+
+		set((state) => ({
 			isStreaming: false,
+			streamingConversationId: undefined,
 			abortController: undefined,
-		});
+			messagesByConversationId: streamingConversationId
+				? {
+						...state.messagesByConversationId,
+						[streamingConversationId]: (
+							state.messagesByConversationId[streamingConversationId] ?? []
+						).map((message) =>
+							message.status === "streaming"
+								? { ...message, status: "done" }
+								: message,
+						),
+					}
+				: state.messagesByConversationId,
+		}));
 	},
 
 	regenerateLastAssistantMessage: async () => {
