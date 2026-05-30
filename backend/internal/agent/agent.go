@@ -82,14 +82,15 @@ func (a *DeepSeekAgent) Stream(ctx context.Context, messages []Message) (<-chan 
 func (a *DeepSeekAgent) streamFallback(ctx context.Context, messages []Message, events chan<- Event, errs chan<- error) {
 	prompt := lastUserContent(messages)
 	if name, args, ok := fallbackToolCall(prompt); ok {
-		if !send(ctx, events, Event{Kind: "tool_call", ToolName: name, ToolArgs: args}) {
+		toolCallID := "fallback_" + name
+		if !send(ctx, events, Event{Kind: "tool_call", ToolCallID: toolCallID, ToolName: name, ToolArgs: args}) {
 			errs <- ctx.Err()
 			return
 		}
 		start := time.Now()
 		result, err := a.tools.Execute(ctx, name, args)
 		latency := time.Since(start).Milliseconds()
-		resultEvent := Event{Kind: "tool_result", ToolName: name, ToolArgs: args, ToolResult: result, LatencyMS: latency}
+		resultEvent := Event{Kind: "tool_result", ToolCallID: toolCallID, ToolName: name, ToolArgs: args, ToolResult: result, LatencyMS: latency}
 		if err != nil {
 			resultEvent.ToolError = err.Error()
 		}
@@ -311,7 +312,7 @@ func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTool
 				continue
 			}
 		}
-		if !send(ctx, events, Event{Kind: "tool_call", ToolName: pending.name, ToolArgs: args}) {
+		if !send(ctx, events, Event{Kind: "tool_call", ToolCallID: toolCallID, ToolName: pending.name, ToolArgs: args}) {
 			return nil, ctx.Err()
 		}
 		start := time.Now()

@@ -30,6 +30,7 @@ func NewRouter(conversations *conversation.Service, chatServices ...*chat.Servic
 	handler := &Router{conversations: conversations, chats: chats}
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(corsForLocalhost())
 
 	api := router.Group("/api")
 	api.GET("/health", handler.health)
@@ -42,6 +43,34 @@ func NewRouter(conversations *conversation.Service, chatServices ...*chat.Servic
 	api.POST("/chat/stream", handler.streamChat)
 
 	return router
+}
+
+func corsForLocalhost() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if isLocalhostOrigin(origin) {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Last-Event-ID")
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	}
+}
+
+func isLocalhostOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	return strings.HasPrefix(origin, "http://localhost:") ||
+		strings.HasPrefix(origin, "https://localhost:") ||
+		strings.HasPrefix(origin, "http://127.0.0.1:") ||
+		strings.HasPrefix(origin, "https://127.0.0.1:")
 }
 
 func (r *Router) health(c *gin.Context) {

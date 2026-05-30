@@ -66,8 +66,17 @@ type UpdateMessageInput struct {
 }
 
 type CreateToolInvocationInput struct {
+	ID        string
 	MessageID string
 	ToolName  string
+	Args      json.RawMessage
+	Result    json.RawMessage
+	Error     string
+	LatencyMS int64
+	Status    string
+}
+
+type UpdateToolInvocationInput struct {
 	Args      json.RawMessage
 	Result    json.RawMessage
 	Error     string
@@ -164,10 +173,7 @@ func (s *Service) CreateMessage(ctx context.Context, input CreateMessageInput) (
 		Role:           input.Role,
 		Content:        input.Content,
 		Reasoning:      input.Reasoning,
-		Status:         input.Status,
-	}
-	if row.Status == "" {
-		row.Status = "complete"
+		Status:         normalizeMessageStatus(input.Role, input.Status),
 	}
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -197,7 +203,7 @@ func (s *Service) UpdateMessage(ctx context.Context, messageID string, input Upd
 		row.Content = input.Content
 		row.Reasoning = input.Reasoning
 		if input.Status != "" {
-			row.Status = input.Status
+			row.Status = normalizeMessageStatus(row.Role, input.Status)
 		}
 		if err := tx.Save(&row).Error; err != nil {
 			return err
@@ -213,20 +219,42 @@ func (s *Service) UpdateMessage(ctx context.Context, messageID string, input Upd
 }
 
 func (s *Service) CreateToolInvocation(ctx context.Context, input CreateToolInvocationInput) (ToolInvocation, error) {
+	id := strings.TrimSpace(input.ID)
+	if id == "" {
+		id = uuid.NewString()
+	}
 	row := store.ToolInvocation{
-		ID:        uuid.NewString(),
+		ID:        id,
 		MessageID: input.MessageID,
 		ToolName:  input.ToolName,
 		Args:      datatypes.JSON(input.Args),
 		Result:    datatypes.JSON(input.Result),
 		Error:     input.Error,
 		LatencyMS: input.LatencyMS,
-		Status:    input.Status,
-	}
-	if row.Status == "" {
-		row.Status = "complete"
+		Status:    normalizeToolInvocationStatus(input.Status),
 	}
 	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return ToolInvocation{}, err
+	}
+	return toolInvocationDTO(row), nil
+}
+
+func (s *Service) UpdateToolInvocation(ctx context.Context, invocationID string, input UpdateToolInvocationInput) (ToolInvocation, error) {
+	var row store.ToolInvocation
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&row, "id = ?", invocationID).Error; err != nil {
+			return err
+		}
+		row.Args = datatypes.JSON(input.Args)
+		row.Result = datatypes.JSON(input.Result)
+		row.Error = input.Error
+		row.LatencyMS = input.LatencyMS
+		if input.Status != "" {
+			row.Status = normalizeToolInvocationStatus(input.Status)
+		}
+		return tx.Save(&row).Error
+	})
+	if err != nil {
 		return ToolInvocation{}, err
 	}
 	return toolInvocationDTO(row), nil
@@ -266,6 +294,41 @@ func IsNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
 }
 
+func normalizeMessageStatus(role string, status string) string {
+	switch strings.TrimSpace(status) {
+	case "", "idle":
+		return "idle"
+	case "streaming":
+		return "streaming"
+	case "done":
+		return "done"
+	case "error":
+		return "error"
+	case "complete":
+		if role == "assistant" {
+			return "done"
+		}
+		return "idle"
+	case "cancelled":
+		return "done"
+	default:
+		return status
+	}
+}
+
+func normalizeToolInvocationStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "", "completed", "complete":
+		return "completed"
+	case "running":
+		return "running"
+	case "error":
+		return "error"
+	default:
+		return status
+	}
+}
+
 func conversationDTO(row store.Conversation) ChatConversation {
 	return ChatConversation{
 		ID:        row.ID,
@@ -287,7 +350,7 @@ func messageDTO(row store.Message) ChatMessage {
 		Role:            row.Role,
 		Content:         row.Content,
 		Reasoning:       row.Reasoning,
-		Status:          row.Status,
+		Status:          normalizeMessageStatus(row.Role, row.Status),
 		CreatedAt:       row.CreatedAt,
 		ToolInvocations: toolInvocations,
 	}
@@ -302,7 +365,7 @@ func toolInvocationDTO(row store.ToolInvocation) ToolInvocation {
 		Result:    json.RawMessage(row.Result),
 		Error:     row.Error,
 		LatencyMS: row.LatencyMS,
-		Status:    row.Status,
+		Status:    normalizeToolInvocationStatus(row.Status),
 		CreatedAt: row.CreatedAt,
 	}
 }

@@ -32,6 +32,44 @@ func TestRouterHealthReturnsOK(t *testing.T) {
 	assertJSONField(t, response.Body.Bytes(), "status", "ok")
 }
 
+func TestRouterAllowsLocalhostCORSPreflight(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/chat/stream", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	request.Header.Set("Access-Control-Request-Headers", "content-type")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("OPTIONS /api/chat/stream status = %d, want %d; body = %s", response.Code, http.StatusNoContent, response.Body.String())
+	}
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want localhost origin", got)
+	}
+	if got := response.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodPost) {
+		t.Fatalf("Access-Control-Allow-Methods = %q, want POST", got)
+	}
+	if got := response.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "content-type") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want content-type", got)
+	}
+}
+
+func TestRouterRejectsNonLocalhostCORSPreflight(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/chat/stream", nil)
+	request.Header.Set("Origin", "https://evil.example")
+	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want empty for non-localhost origin", got)
+	}
+}
+
 func TestRouterCreatesListsRenamesAndDeletesConversation(t *testing.T) {
 	router, _ := newTestRouter(t)
 

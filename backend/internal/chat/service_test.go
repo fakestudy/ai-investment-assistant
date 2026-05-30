@@ -64,11 +64,11 @@ func TestServiceStreamsAgentOutputAndPersistsMessages(t *testing.T) {
 	if len(messages) != 2 {
 		t.Fatalf("ListMessages() len = %d, want 2", len(messages))
 	}
-	if messages[0].Role != "user" || messages[0].Content != "Explain AI moats" || messages[0].Status != "complete" {
-		t.Fatalf("user message = %+v, want complete persisted prompt", messages[0])
+	if messages[0].Role != "user" || messages[0].Content != "Explain AI moats" || messages[0].Status != "idle" {
+		t.Fatalf("user message = %+v, want idle persisted prompt", messages[0])
 	}
-	if messages[1].ID != assistantID || messages[1].Content != "Hello investor" || messages[1].Reasoning != "checking context" || messages[1].Status != "complete" {
-		t.Fatalf("assistant message = %+v, want completed streamed output", messages[1])
+	if messages[1].ID != assistantID || messages[1].Content != "Hello investor" || messages[1].Reasoning != "checking context" || messages[1].Status != "done" {
+		t.Fatalf("assistant message = %+v, want done streamed output", messages[1])
 	}
 	conversationRow := mustFindConversation(t, ctx, conversations, created.ID)
 	if conversationRow.Title != "Explain AI moats" {
@@ -122,8 +122,8 @@ func TestServiceMapsAgentToolEventsToStreamInvocations(t *testing.T) {
 	}
 	svc := NewService(conversations, fakeAgent{
 		events: []AgentEvent{
-			{Kind: "tool_call", ToolName: "web_search", ToolArgs: map[string]any{"query": "AI moats"}},
-			{Kind: "tool_result", ToolName: "web_search", ToolArgs: map[string]any{"query": "AI moats"}, ToolResult: map[string]any{"configured": false}, LatencyMS: 12},
+			{Kind: "tool_call", ToolCallID: "call-search-1", ToolName: "web_search", ToolArgs: map[string]any{"query": "AI moats"}},
+			{Kind: "tool_result", ToolCallID: "call-search-1", ToolName: "web_search", ToolArgs: map[string]any{"query": "AI moats"}, ToolResult: map[string]any{"configured": false}, LatencyMS: 12},
 			{Kind: "delta", Text: "Search unavailable."},
 		},
 	})
@@ -144,8 +144,8 @@ func TestServiceMapsAgentToolEventsToStreamInvocations(t *testing.T) {
 	if string(collected[1].Invocation.Args) != `{"query":"AI moats"}` {
 		t.Fatalf("tool_call args = %s, want query JSON", collected[1].Invocation.Args)
 	}
-	if collected[2].Invocation == nil || collected[2].Invocation.Status != "complete" || collected[2].Invocation.LatencyMS != 12 {
-		t.Fatalf("tool_result invocation = %+v, want complete result with latency", collected[2].Invocation)
+	if collected[2].Invocation == nil || collected[2].Invocation.ID != collected[1].Invocation.ID || collected[2].Invocation.Status != "completed" || collected[2].Invocation.LatencyMS != 12 {
+		t.Fatalf("tool_result invocation = %+v, want same id completed result with latency; tool_call = %+v", collected[2].Invocation, collected[1].Invocation)
 	}
 	if string(collected[2].Invocation.Result) != `{"configured":false}` {
 		t.Fatalf("tool_result result = %s, want result JSON", collected[2].Invocation.Result)
@@ -158,10 +158,46 @@ func TestServiceMapsAgentToolEventsToStreamInvocations(t *testing.T) {
 		t.Fatalf("ListMessages() len = %d, want user and assistant", len(messages))
 	}
 	if len(messages[1].ToolInvocations) != 1 {
-		t.Fatalf("assistant tool invocations len = %d, want persisted tool_result", len(messages[1].ToolInvocations))
+		t.Fatalf("assistant tool invocations len = %d, want single updated tool invocation", len(messages[1].ToolInvocations))
 	}
-	if messages[1].ToolInvocations[0].ToolName != "web_search" || messages[1].ToolInvocations[0].Status != "complete" {
-		t.Fatalf("persisted invocation = %+v, want complete web_search", messages[1].ToolInvocations[0])
+	if messages[1].ToolInvocations[0].ID != collected[1].Invocation.ID || messages[1].ToolInvocations[0].ToolName != "web_search" || messages[1].ToolInvocations[0].Status != "completed" {
+		t.Fatalf("persisted invocation = %+v, want same id completed web_search", messages[1].ToolInvocations[0])
+	}
+}
+
+func TestServiceMarksToolResultErrorsWithoutChangingInvocationID(t *testing.T) {
+	ctx := context.Background()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	svc := NewService(conversations, fakeAgent{
+		events: []AgentEvent{
+			{Kind: "tool_call", ToolCallID: "call-fetch-1", ToolName: "fetch_url", ToolArgs: map[string]any{"url": "https://example.com"}},
+			{Kind: "tool_result", ToolCallID: "call-fetch-1", ToolName: "fetch_url", ToolArgs: map[string]any{"url": "https://example.com"}, ToolError: "network denied", LatencyMS: 7},
+		},
+	})
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID: created.ID,
+		Message:        "fetch_url: https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	collected := collectEvents(t, events)
+
+	assertEventTypes(t, collected, []string{"message_created", "tool_call", "tool_result", "title", "done"})
+	if collected[2].Invocation == nil || collected[2].Invocation.ID != collected[1].Invocation.ID || collected[2].Invocation.Status != "error" || collected[2].Invocation.Error != "network denied" {
+		t.Fatalf("tool_result invocation = %+v, want same id error result; tool_call = %+v", collected[2].Invocation, collected[1].Invocation)
+	}
+	messages, err := conversations.ListMessages(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages[1].ToolInvocations) != 1 || messages[1].ToolInvocations[0].ID != collected[1].Invocation.ID || messages[1].ToolInvocations[0].Status != "error" {
+		t.Fatalf("persisted invocations = %+v, want one error invocation with tool_call id", messages[1].ToolInvocations)
 	}
 }
 
@@ -342,7 +378,7 @@ func TestServiceRegeneratesFromMessageWithEmptyPrompt(t *testing.T) {
 		ConversationID: created.ID,
 		Role:           "user",
 		Content:        "Original question",
-		Status:         "complete",
+		Status:         "idle",
 	})
 	if err != nil {
 		t.Fatalf("CreateMessage() user error = %v", err)
@@ -351,7 +387,7 @@ func TestServiceRegeneratesFromMessageWithEmptyPrompt(t *testing.T) {
 		ConversationID: created.ID,
 		Role:           "assistant",
 		Content:        "Old answer",
-		Status:         "complete",
+		Status:         "done",
 	})
 	if err != nil {
 		t.Fatalf("CreateMessage() assistant error = %v", err)
@@ -369,8 +405,8 @@ func TestServiceRegeneratesFromMessageWithEmptyPrompt(t *testing.T) {
 	collected := collectEvents(t, events)
 
 	assertEventTypes(t, collected, []string{"message_created", "delta", "title", "done"})
-	if len(agent.messages) == 0 || agent.messages[len(agent.messages)-1].Content != userMessage.Content {
-		t.Fatalf("agent messages = %+v, want last content from original user message %q", agent.messages, userMessage.Content)
+	if len(agent.messages) != 1 || agent.messages[0].Role != "user" || agent.messages[0].Content != userMessage.Content {
+		t.Fatalf("agent messages = %+v, want history ending at original user message %q", agent.messages, userMessage.Content)
 	}
 	messages, err := conversations.ListMessages(ctx, created.ID)
 	if err != nil {
@@ -395,7 +431,7 @@ func TestServiceUsesParentMessageWithoutCreatingDuplicateUser(t *testing.T) {
 		ConversationID: created.ID,
 		Role:           "user",
 		Content:        "Already persisted prompt",
-		Status:         "complete",
+		Status:         "idle",
 	})
 	if err != nil {
 		t.Fatalf("CreateMessage() parent error = %v", err)
@@ -421,6 +457,106 @@ func TestServiceUsesParentMessageWithoutCreatingDuplicateUser(t *testing.T) {
 	}
 	if messages[0].ID != parent.ID || messages[1].Role != "assistant" {
 		t.Fatalf("messages = %+v, want original parent followed by assistant", messages)
+	}
+}
+
+func TestServiceSendsConversationHistoryToAgentForNewPrompt(t *testing.T) {
+	ctx := context.Background()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	if _, err := conversations.CreateMessage(ctx, conversation.CreateMessageInput{
+		ConversationID: created.ID,
+		Role:           "user",
+		Content:        "First question",
+		Status:         "idle",
+	}); err != nil {
+		t.Fatalf("CreateMessage() first user error = %v", err)
+	}
+	if _, err := conversations.CreateMessage(ctx, conversation.CreateMessageInput{
+		ConversationID: created.ID,
+		Role:           "assistant",
+		Content:        "First answer",
+		Status:         "done",
+	}); err != nil {
+		t.Fatalf("CreateMessage() first assistant error = %v", err)
+	}
+	agent := &capturingAgent{events: []AgentEvent{{Kind: "delta", Text: "Second answer"}}}
+	svc := NewService(conversations, agent)
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID: created.ID,
+		Message:        "Second question",
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	_ = collectEvents(t, events)
+
+	want := []AgentMessage{
+		{Role: "user", Content: "First question"},
+		{Role: "assistant", Content: "First answer"},
+		{Role: "user", Content: "Second question"},
+	}
+	if !agentMessagesEqual(agent.messages, want) {
+		t.Fatalf("agent messages = %+v, want %+v", agent.messages, want)
+	}
+}
+
+func TestServiceSendsHistoryThroughEditedParentMessageToAgent(t *testing.T) {
+	ctx := context.Background()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	if _, err := conversations.CreateMessage(ctx, conversation.CreateMessageInput{
+		ConversationID: created.ID,
+		Role:           "user",
+		Content:        "Original setup",
+		Status:         "idle",
+	}); err != nil {
+		t.Fatalf("CreateMessage() setup user error = %v", err)
+	}
+	if _, err := conversations.CreateMessage(ctx, conversation.CreateMessageInput{
+		ConversationID: created.ID,
+		Role:           "assistant",
+		Content:        "Original answer",
+		Status:         "done",
+	}); err != nil {
+		t.Fatalf("CreateMessage() setup assistant error = %v", err)
+	}
+	parent, err := conversations.CreateMessage(ctx, conversation.CreateMessageInput{
+		ConversationID: created.ID,
+		Role:           "user",
+		Content:        "Edited follow-up",
+		Status:         "idle",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage() parent user error = %v", err)
+	}
+	agent := &capturingAgent{events: []AgentEvent{{Kind: "delta", Text: "Edited answer"}}}
+	svc := NewService(conversations, agent)
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID:  created.ID,
+		ParentMessageID: parent.ID,
+		Message:         parent.Content,
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	_ = collectEvents(t, events)
+
+	want := []AgentMessage{
+		{Role: "user", Content: "Original setup"},
+		{Role: "assistant", Content: "Original answer"},
+		{Role: "user", Content: "Edited follow-up"},
+	}
+	if !agentMessagesEqual(agent.messages, want) {
+		t.Fatalf("agent messages = %+v, want %+v", agent.messages, want)
 	}
 }
 
@@ -651,6 +787,18 @@ func assertEventTypes(t *testing.T, events []StreamEvent, want []string) {
 			t.Fatalf("events[%d].Type = %q, want %q; events = %+v", i, event.Type, want[i], events)
 		}
 	}
+}
+
+func agentMessagesEqual(got []AgentMessage, want []AgentMessage) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func newTestConversationService(t *testing.T) *conversation.Service {

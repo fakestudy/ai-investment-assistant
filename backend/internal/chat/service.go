@@ -49,19 +49,25 @@ func (s *Service) Stream(ctx context.Context, request StreamChatRequest) (<-chan
 		return nil, ValidationError{Message: "message is required"}
 	}
 
-	prompt, shouldCreateUser, err := s.resolvePrompt(ctx, conversationID, messageText, request)
+	prompt, shouldCreateUser, historyThroughID, err := s.resolvePrompt(ctx, conversationID, messageText, request)
 	if err != nil {
 		return nil, err
 	}
 	if shouldCreateUser {
-		if _, err := s.conversations.CreateMessage(ctx, conversation.CreateMessageInput{
+		createdUser, err := s.conversations.CreateMessage(ctx, conversation.CreateMessageInput{
 			ConversationID: conversationID,
 			Role:           "user",
 			Content:        prompt,
-			Status:         "complete",
-		}); err != nil {
+			Status:         "idle",
+		})
+		if err != nil {
 			return nil, err
 		}
+		historyThroughID = createdUser.ID
+	}
+	agentMessages, err := s.agentMessages(ctx, conversationID, historyThroughID, prompt)
+	if err != nil {
+		return nil, err
 	}
 	assistant, err := s.conversations.CreateMessage(ctx, conversation.CreateMessageInput{
 		ConversationID: conversationID,
@@ -73,40 +79,47 @@ func (s *Service) Stream(ctx context.Context, request StreamChatRequest) (<-chan
 	}
 
 	output := make(chan StreamEvent)
-	go s.runStream(ctx, conversationID, prompt, assistant, output)
+	go s.runStream(ctx, conversationID, prompt, agentMessages, assistant, output)
 	return output, nil
 }
 
-func (s *Service) resolvePrompt(ctx context.Context, conversationID string, messageText string, request StreamChatRequest) (string, bool, error) {
+func (s *Service) resolvePrompt(ctx context.Context, conversationID string, messageText string, request StreamChatRequest) (string, bool, string, error) {
 	if parentID := strings.TrimSpace(request.ParentMessageID); parentID != "" {
 		parent, err := s.findMessage(ctx, conversationID, parentID)
 		if err != nil {
-			return "", false, err
+			return "", false, "", err
 		}
 		if messageText != "" {
-			return messageText, false, nil
+			return messageText, false, parent.ID, nil
 		}
-		return parent.Content, false, nil
+		return parent.Content, false, parent.ID, nil
 	}
 
 	if regenerateID := strings.TrimSpace(request.RegenerateFromMessageID); regenerateID != "" {
 		message, err := s.findMessage(ctx, conversationID, regenerateID)
 		if err != nil {
-			return "", false, err
+			return "", false, "", err
 		}
 		if messageText != "" {
-			return messageText, false, nil
+			if message.Role == "assistant" {
+				if previous, ok := s.previousUserMessage(ctx, conversationID, message.ID); ok {
+					return messageText, false, previous.ID, nil
+				}
+			}
+			return messageText, false, message.ID, nil
 		}
 		prompt := message.Content
+		historyThroughID := message.ID
 		if message.Role == "assistant" {
 			if previous, ok := s.previousUserMessage(ctx, conversationID, message.ID); ok {
 				prompt = previous.Content
+				historyThroughID = previous.ID
 			}
 		}
-		return prompt, false, nil
+		return prompt, false, historyThroughID, nil
 	}
 
-	return messageText, true, nil
+	return messageText, true, "", nil
 }
 
 func (s *Service) findMessage(ctx context.Context, conversationID string, messageID string) (conversation.ChatMessage, error) {
@@ -139,7 +152,34 @@ func (s *Service) previousUserMessage(ctx context.Context, conversationID string
 	return conversation.ChatMessage{}, false
 }
 
-func (s *Service) runStream(ctx context.Context, conversationID string, prompt string, assistant conversation.ChatMessage, output chan<- StreamEvent) {
+func (s *Service) agentMessages(ctx context.Context, conversationID string, throughMessageID string, prompt string) ([]AgentMessage, error) {
+	messages, err := s.conversations.ListMessages(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	history := make([]AgentMessage, 0, len(messages))
+	foundLimit := throughMessageID == ""
+	for _, message := range messages {
+		if message.Role == "user" || message.Role == "assistant" {
+			if strings.TrimSpace(message.Content) != "" {
+				history = append(history, AgentMessage{Role: message.Role, Content: message.Content})
+			}
+		}
+		if throughMessageID != "" && message.ID == throughMessageID {
+			foundLimit = true
+			break
+		}
+	}
+	if len(history) > 0 && prompt != "" && history[len(history)-1].Role == "user" {
+		history[len(history)-1].Content = prompt
+	}
+	if !foundLimit || len(history) == 0 {
+		return []AgentMessage{{Role: "user", Content: prompt}}, nil
+	}
+	return history, nil
+}
+
+func (s *Service) runStream(ctx context.Context, conversationID string, prompt string, agentMessages []AgentMessage, assistant conversation.ChatMessage, output chan<- StreamEvent) {
 	defer close(output)
 
 	if !sendEvent(ctx, output, StreamEvent{Type: "message_created", Message: &assistant}) {
@@ -147,9 +187,10 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 		return
 	}
 
-	agentEvents, agentErrors := s.agent.Stream(ctx, []AgentMessage{{Role: "user", Content: prompt}})
+	agentEvents, agentErrors := s.agent.Stream(ctx, agentMessages)
 	var content strings.Builder
 	var reasoning strings.Builder
+	toolInvocations := map[string]ToolInvocation{}
 	for agentEvents != nil || agentErrors != nil {
 		select {
 		case <-ctx.Done():
@@ -169,7 +210,7 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 				agentEvents = nil
 				continue
 			}
-			if !s.handleAgentEvent(ctx, output, assistant.ID, event, &content, &reasoning) {
+			if !s.handleAgentEvent(ctx, output, assistant.ID, event, &content, &reasoning, toolInvocations) {
 				s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
 				return
 			}
@@ -179,7 +220,7 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 	if _, err := s.conversations.UpdateMessage(context.WithoutCancel(ctx), assistant.ID, conversation.UpdateMessageInput{
 		Content:   content.String(),
 		Reasoning: reasoning.String(),
-		Status:    "complete",
+		Status:    "done",
 	}); err != nil {
 		_ = sendEvent(ctx, output, StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
 		return
@@ -193,7 +234,7 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 	_ = sendEvent(ctx, output, StreamEvent{Type: "done", MessageID: assistant.ID})
 }
 
-func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEvent, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder) bool {
+func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEvent, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder, toolInvocations map[string]ToolInvocation) bool {
 	switch event.Kind {
 	case "reasoning":
 		if !sendEvent(ctx, output, StreamEvent{Type: "reasoning", MessageID: assistantID, Text: event.Text}) {
@@ -203,14 +244,38 @@ func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEven
 		return true
 	case "tool_call":
 		invocation := invocationFromAgentEvent(assistantID, event, "running")
+		if persisted, err := s.conversations.CreateToolInvocation(context.WithoutCancel(ctx), conversation.CreateToolInvocationInput{
+			MessageID: assistantID,
+			ToolName:  invocation.ToolName,
+			Args:      invocation.Args,
+			Result:    invocation.Result,
+			Error:     invocation.Error,
+			LatencyMS: invocation.LatencyMS,
+			Status:    invocation.Status,
+		}); err == nil {
+			invocation = persisted
+		}
+		toolInvocations[toolInvocationKey(event)] = invocation
 		return sendEvent(ctx, output, StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: &invocation})
 	case "tool_result":
-		status := "complete"
+		status := "completed"
 		if event.ToolError != "" {
 			status = "error"
 		}
 		invocation := invocationFromAgentEvent(assistantID, event, status)
-		if persisted, err := s.conversations.CreateToolInvocation(context.WithoutCancel(ctx), conversation.CreateToolInvocationInput{
+		if previous, ok := toolInvocations[toolInvocationKey(event)]; ok {
+			invocation.ID = previous.ID
+			invocation.CreatedAt = previous.CreatedAt
+			if persisted, err := s.conversations.UpdateToolInvocation(context.WithoutCancel(ctx), previous.ID, conversation.UpdateToolInvocationInput{
+				Args:      invocation.Args,
+				Result:    invocation.Result,
+				Error:     invocation.Error,
+				LatencyMS: invocation.LatencyMS,
+				Status:    invocation.Status,
+			}); err == nil {
+				invocation = persisted
+			}
+		} else if persisted, err := s.conversations.CreateToolInvocation(context.WithoutCancel(ctx), conversation.CreateToolInvocationInput{
 			MessageID: assistantID,
 			ToolName:  invocation.ToolName,
 			Args:      invocation.Args,
@@ -229,6 +294,13 @@ func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEven
 		content.WriteString(event.Text)
 		return true
 	}
+}
+
+func toolInvocationKey(event AgentEvent) string {
+	if strings.TrimSpace(event.ToolCallID) != "" {
+		return event.ToolCallID
+	}
+	return event.ToolName + ":" + string(mustJSON(event.ToolArgs))
 }
 
 func invocationFromAgentEvent(assistantID string, event AgentEvent, status string) ToolInvocation {
@@ -260,7 +332,7 @@ func (s *Service) finalizeCanceled(ctx context.Context, assistantID string, cont
 	_, _ = s.conversations.UpdateMessage(context.WithoutCancel(ctx), assistantID, conversation.UpdateMessageInput{
 		Content:   content,
 		Reasoning: reasoning,
-		Status:    "cancelled",
+		Status:    "done",
 	})
 }
 

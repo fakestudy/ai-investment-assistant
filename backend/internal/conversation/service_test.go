@@ -372,8 +372,8 @@ func TestServiceListMessagesIncludesToolInvocations(t *testing.T) {
 	if invocation.LatencyMS != 123 {
 		t.Fatalf("ToolInvocation.LatencyMS = %d, want 123", invocation.LatencyMS)
 	}
-	if invocation.Status != "complete" {
-		t.Fatalf("ToolInvocation.Status = %q, want %q", invocation.Status, "complete")
+	if invocation.Status != "completed" {
+		t.Fatalf("ToolInvocation.Status = %q, want %q", invocation.Status, "completed")
 	}
 
 	payload, err := json.Marshal(messages[0])
