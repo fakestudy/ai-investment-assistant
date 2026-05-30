@@ -37,6 +37,7 @@ import type { ChatMessage, ToolInvocation } from "../types";
 
 type ChatMessageItemProps = {
 	message: ChatMessage;
+	canRegenerate?: boolean;
 	onEditUserMessage: (messageId: string, content: string) => Promise<void>;
 	onRegenerate: () => Promise<void>;
 };
@@ -78,6 +79,7 @@ function ToolInvocationDetails({ invocation }: { invocation: ToolInvocation }) {
 
 export function ChatMessageItem({
 	message,
+	canRegenerate = false,
 	onEditUserMessage,
 	onRegenerate,
 }: ChatMessageItemProps) {
@@ -216,13 +218,15 @@ export function ChatMessageItem({
 							</MessageAction>
 						) : (
 							<>
-								<MessageAction
-									label="Regenerate"
-									onClick={() => void onRegenerate()}
-									tooltip="Regenerate"
-								>
-									<RotateCcwIcon className="size-4" />
-								</MessageAction>
+								{canRegenerate && (
+									<MessageAction
+										label="Regenerate"
+										onClick={() => void onRegenerate()}
+										tooltip="Regenerate"
+									>
+										<RotateCcwIcon className="size-4" />
+									</MessageAction>
+								)}
 								<MessageAction
 									className={cn(feedback === "liked" && "bg-zinc-100")}
 									label="Like"

@@ -47,14 +47,23 @@ export function ChatMessageList() {
 	return (
 		<Conversation className="bg-white">
 			<ConversationContent className="mx-auto w-full max-w-3xl gap-7 px-6 py-8">
-				{messages.map((message) => (
-					<ChatMessageItem
-						key={message.id}
-						message={message}
-						onEditUserMessage={editUserMessageAndRegenerate}
-						onRegenerate={regenerateLastAssistantMessage}
-					/>
-				))}
+				{messages.map((message, index) => {
+					const isLastAssistantMessage =
+						message.role === "assistant" &&
+						messages
+							.slice(index + 1)
+							.every((item) => item.role !== "assistant");
+
+					return (
+						<ChatMessageItem
+							canRegenerate={isLastAssistantMessage}
+							key={message.id}
+							message={message}
+							onEditUserMessage={editUserMessageAndRegenerate}
+							onRegenerate={regenerateLastAssistantMessage}
+						/>
+					);
+				})}
 			</ConversationContent>
 			<ConversationScrollButton className="border-zinc-200 bg-white shadow-sm" />
 		</Conversation>
