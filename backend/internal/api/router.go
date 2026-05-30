@@ -23,7 +23,7 @@ type editMessageRequest struct {
 }
 
 func NewRouter(conversations *conversation.Service, chatServices ...*chat.Service) *gin.Engine {
-	chats := chat.NewService(conversations, chat.EchoAgent{})
+	chats := chat.NewService(conversations, nil)
 	if len(chatServices) > 0 && chatServices[0] != nil {
 		chats = chatServices[0]
 	}

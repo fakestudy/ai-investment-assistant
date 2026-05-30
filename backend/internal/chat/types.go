@@ -1,9 +1,9 @@
 package chat
 
 import (
-	"context"
 	"encoding/json"
 
+	"ai-investment-assistant/backend/internal/agent"
 	"ai-investment-assistant/backend/internal/conversation"
 )
 
@@ -44,20 +44,6 @@ func (e StreamEvent) MarshalJSON() ([]byte, error) {
 	return json.Marshal(streamEvent(e))
 }
 
-type AgentMessage struct {
-	Role    string
-	Content string
-}
-
-type AgentEvent struct {
-	Kind       string
-	Text       string
-	Invocation *ToolInvocation
-}
-
-// Agent implementations must eventually close both returned channels.
-// The error channel closes after the final error is sent, or without a value
-// when the stream completed successfully.
-type Agent interface {
-	Stream(ctx context.Context, messages []AgentMessage) (<-chan AgentEvent, <-chan error)
-}
+type AgentMessage = agent.Message
+type AgentEvent = agent.Event
+type Agent = agent.Agent

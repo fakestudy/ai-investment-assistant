@@ -2,11 +2,17 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	agentpkg "ai-investment-assistant/backend/internal/agent"
+	"ai-investment-assistant/backend/internal/config"
 	"ai-investment-assistant/backend/internal/conversation"
+	"ai-investment-assistant/backend/internal/tools"
+	"github.com/google/uuid"
 )
 
 type Service struct {
@@ -24,7 +30,8 @@ func (e ValidationError) Error() string {
 
 func NewService(conversations *conversation.Service, agent Agent) *Service {
 	if agent == nil {
-		agent = EchoAgent{}
+		cfg := config.Config{}
+		agent = agentpkg.NewEinoAgent(cfg, tools.NewRegistry(cfg))
 	}
 	return &Service{
 		conversations: conversations,
@@ -195,9 +202,15 @@ func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEven
 		reasoning.WriteString(event.Text)
 		return true
 	case "tool_call":
-		return sendEvent(ctx, output, StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: event.Invocation})
+		invocation := invocationFromAgentEvent(assistantID, event, "running")
+		return sendEvent(ctx, output, StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: &invocation})
 	case "tool_result":
-		return sendEvent(ctx, output, StreamEvent{Type: "tool_result", MessageID: assistantID, Invocation: event.Invocation})
+		status := "complete"
+		if event.ToolError != "" {
+			status = "error"
+		}
+		invocation := invocationFromAgentEvent(assistantID, event, status)
+		return sendEvent(ctx, output, StreamEvent{Type: "tool_result", MessageID: assistantID, Invocation: &invocation})
 	default:
 		if !sendEvent(ctx, output, StreamEvent{Type: "delta", MessageID: assistantID, Text: event.Text}) {
 			return false
@@ -205,6 +218,31 @@ func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEven
 		content.WriteString(event.Text)
 		return true
 	}
+}
+
+func invocationFromAgentEvent(assistantID string, event AgentEvent, status string) ToolInvocation {
+	return ToolInvocation{
+		ID:        uuid.NewString(),
+		MessageID: assistantID,
+		ToolName:  event.ToolName,
+		Args:      mustJSON(event.ToolArgs),
+		Result:    mustJSON(event.ToolResult),
+		Error:     event.ToolError,
+		LatencyMS: event.LatencyMS,
+		Status:    status,
+		CreatedAt: time.Now(),
+	}
+}
+
+func mustJSON(value any) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`null`)
+	}
+	return raw
 }
 
 func (s *Service) finalizeCanceled(ctx context.Context, assistantID string, content string, reasoning string) {
@@ -274,25 +312,4 @@ func ValidationMessage(err error) string {
 		return validation.Message
 	}
 	return "invalid request"
-}
-
-type EchoAgent struct{}
-
-func (EchoAgent) Stream(ctx context.Context, messages []AgentMessage) (<-chan AgentEvent, <-chan error) {
-	events := make(chan AgentEvent)
-	errs := make(chan error)
-	go func() {
-		defer close(events)
-		defer close(errs)
-		text := ""
-		if len(messages) > 0 {
-			text = messages[len(messages)-1].Content
-		}
-		select {
-		case <-ctx.Done():
-			errs <- ctx.Err()
-		case events <- AgentEvent{Kind: "delta", Text: text}:
-		}
-	}()
-	return events, errs
 }

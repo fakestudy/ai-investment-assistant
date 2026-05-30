@@ -13,6 +13,7 @@ type Config struct {
 	DeepSeekBaseURL   string
 	DeepSeekModel     string
 	SearchAPIKey      string
+	SearchBaseURL     string
 	HTTPClientTimeout time.Duration
 }
 
@@ -24,6 +25,7 @@ func Load() Config {
 		DeepSeekBaseURL:   getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
 		DeepSeekModel:     getEnv("DEEPSEEK_MODEL", "deepseek-chat"),
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
+		SearchBaseURL:     os.Getenv("SEARCH_BASE_URL"),
 		HTTPClientTimeout: time.Duration(getEnvInt("HTTP_CLIENT_TIMEOUT_SECONDS", 30)) * time.Second,
 	}
 }

@@ -113,6 +113,45 @@ func TestServiceEmitsErrorAndMarksAssistantMessageOnAgentFailure(t *testing.T) {
 	}
 }
 
+func TestServiceMapsAgentToolEventsToStreamInvocations(t *testing.T) {
+	ctx := context.Background()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	svc := NewService(conversations, fakeAgent{
+		events: []AgentEvent{
+			{Kind: "tool_call", ToolName: "web_search", ToolArgs: map[string]any{"query": "AI moats"}},
+			{Kind: "tool_result", ToolName: "web_search", ToolArgs: map[string]any{"query": "AI moats"}, ToolResult: map[string]any{"configured": false}, LatencyMS: 12},
+			{Kind: "delta", Text: "Search unavailable."},
+		},
+	})
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID: created.ID,
+		Message:        "web_search: AI moats",
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	collected := collectEvents(t, events)
+
+	assertEventTypes(t, collected, []string{"message_created", "tool_call", "tool_result", "delta", "title", "done"})
+	if collected[1].Invocation == nil || collected[1].Invocation.ToolName != "web_search" || collected[1].Invocation.Status != "running" {
+		t.Fatalf("tool_call invocation = %+v, want running web_search", collected[1].Invocation)
+	}
+	if string(collected[1].Invocation.Args) != `{"query":"AI moats"}` {
+		t.Fatalf("tool_call args = %s, want query JSON", collected[1].Invocation.Args)
+	}
+	if collected[2].Invocation == nil || collected[2].Invocation.Status != "complete" || collected[2].Invocation.LatencyMS != 12 {
+		t.Fatalf("tool_result invocation = %+v, want complete result with latency", collected[2].Invocation)
+	}
+	if string(collected[2].Invocation.Result) != `{"configured":false}` {
+		t.Fatalf("tool_result result = %s, want result JSON", collected[2].Invocation.Result)
+	}
+}
+
 func TestServicePersistsPartialAssistantWhenClientCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

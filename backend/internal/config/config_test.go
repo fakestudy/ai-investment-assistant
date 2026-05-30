@@ -12,6 +12,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("DEEPSEEK_BASE_URL", "")
 	t.Setenv("DEEPSEEK_MODEL", "")
 	t.Setenv("SEARCH_API_KEY", "")
+	t.Setenv("SEARCH_BASE_URL", "")
 	t.Setenv("HTTP_CLIENT_TIMEOUT_SECONDS", "")
 
 	cfg := Load()
@@ -40,6 +41,7 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("DEEPSEEK_BASE_URL", "https://example.com")
 	t.Setenv("DEEPSEEK_MODEL", "deepseek-reasoner")
 	t.Setenv("SEARCH_API_KEY", "search-key")
+	t.Setenv("SEARCH_BASE_URL", "https://search.example.com")
 	t.Setenv("HTTP_CLIENT_TIMEOUT_SECONDS", "7")
 
 	cfg := Load()
@@ -61,6 +63,9 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.SearchAPIKey != "search-key" {
 		t.Fatalf("SearchAPIKey = %q", cfg.SearchAPIKey)
+	}
+	if cfg.SearchBaseURL != "https://search.example.com" {
+		t.Fatalf("SearchBaseURL = %q", cfg.SearchBaseURL)
 	}
 	if cfg.HTTPClientTimeout != 7*time.Second {
 		t.Fatalf("HTTPClientTimeout = %s, want %s", cfg.HTTPClientTimeout, 7*time.Second)
