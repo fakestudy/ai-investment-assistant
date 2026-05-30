@@ -14,6 +14,7 @@ type Config struct {
 	DeepSeekModel     string
 	SearchAPIKey      string
 	SearchBaseURL     string
+	FetchAllowPrivate bool
 	HTTPClientTimeout time.Duration
 }
 
@@ -26,6 +27,7 @@ func Load() Config {
 		DeepSeekModel:     getEnv("DEEPSEEK_MODEL", "deepseek-chat"),
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
 		SearchBaseURL:     os.Getenv("SEARCH_BASE_URL"),
+		FetchAllowPrivate: getEnvBool("FETCH_ALLOW_PRIVATE", false),
 		HTTPClientTimeout: time.Duration(getEnvInt("HTTP_CLIENT_TIMEOUT_SECONDS", 30)) * time.Second,
 	}
 }
@@ -43,6 +45,18 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return fallback
 	}

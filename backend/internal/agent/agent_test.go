@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,14 @@ func TestDeepSeekCompatibleStreamParsesReasoningAndDelta(t *testing.T) {
 		if body["model"] != "deepseek-chat" || body["stream"] != true {
 			t.Fatalf("request body = %+v, want model and stream=true", body)
 		}
+		messages := body["messages"].([]any)
+		firstMessage := messages[0].(map[string]any)
+		if firstMessage["role"] != "user" || firstMessage["content"] != "hello" {
+			t.Fatalf("first message = %+v, want role/content JSON keys", firstMessage)
+		}
+		if _, ok := firstMessage["Role"]; ok {
+			t.Fatalf("first message = %+v, must not use exported Go field keys", firstMessage)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking \",\"content\":\"Hello\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\" investor\"}}]}\n\n"))
@@ -62,7 +71,8 @@ func TestDeepSeekCompatibleStreamParsesReasoningAndDelta(t *testing.T) {
 		DeepSeekBaseURL:   server.URL,
 		DeepSeekModel:     "deepseek-chat",
 		HTTPClientTimeout: time.Second,
-	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}))
+		FetchAllowPrivate: true,
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second, FetchAllowPrivate: true}))
 
 	events, errs := agentUnderTest.Stream(context.Background(), []agent.Message{
 		{Role: "user", Content: "hello"},
@@ -91,10 +101,17 @@ func TestDeepSeekCompatibleStreamExecutesToolCalls(t *testing.T) {
 		_, _ = w.Write([]byte("<html><title>DeepSeek Tool Page</title><body>Tool body</body></html>"))
 	}))
 	defer page.Close()
+	var requestCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"fetch_url\",\"arguments\":\"{\\\"url\\\":\"}}]}}]}\n\n"))
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":" + strconv.Quote(strconv.Quote(page.URL)+"}") + "}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		requestCount++
+		if requestCount == 1 {
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"fetch_url\",\"arguments\":\"{\\\"url\\\":\"}}]}}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":" + strconv.Quote(strconv.Quote(page.URL)+"}") + "}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Final\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
@@ -103,15 +120,16 @@ func TestDeepSeekCompatibleStreamExecutesToolCalls(t *testing.T) {
 		DeepSeekBaseURL:   server.URL,
 		DeepSeekModel:     "deepseek-chat",
 		HTTPClientTimeout: time.Second,
-	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}))
+		FetchAllowPrivate: true,
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second, FetchAllowPrivate: true}))
 
 	events, errs := agentUnderTest.Stream(context.Background(), []agent.Message{
 		{Role: "user", Content: "fetch page"},
 	})
 	collected := collectAgentEvents(t, events, errs)
 
-	if len(collected) != 2 {
-		t.Fatalf("events len = %d, want tool_call and tool_result; events = %+v", len(collected), collected)
+	if len(collected) != 3 {
+		t.Fatalf("events len = %d, want tool_call, tool_result, final delta; events = %+v", len(collected), collected)
 	}
 	if collected[0].Kind != "tool_call" || collected[0].ToolName != "fetch_url" {
 		t.Fatalf("first event = %+v, want fetch_url tool_call", collected[0])
@@ -126,6 +144,71 @@ func TestDeepSeekCompatibleStreamExecutesToolCalls(t *testing.T) {
 	if result["title"] != "DeepSeek Tool Page" {
 		t.Fatalf("tool result title = %v, want DeepSeek Tool Page", result["title"])
 	}
+	if collected[2].Kind != "delta" || collected[2].Text != "Final" {
+		t.Fatalf("final event = %+v, want final delta", collected[2])
+	}
+}
+
+func TestDeepSeekCompatibleStreamSendsToolResultBackForFinalAnswer(t *testing.T) {
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html><title>Loop Page</title><body>Loop body</body></html>"))
+	}))
+	defer page.Close()
+	var mu sync.Mutex
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body error = %v", err)
+		}
+		mu.Lock()
+		requests = append(requests, body)
+		requestNumber := len(requests)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch requestNumber {
+		case 1:
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_fetch\",\"type\":\"function\",\"function\":{\"name\":\"fetch_url\",\"arguments\":\"{\\\"url\\\":\"}}]}}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":" + strconv.Quote(strconv.Quote(page.URL)+"}") + "}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		case 2:
+			messages := body["messages"].([]any)
+			lastMessage := messages[len(messages)-1].(map[string]any)
+			if lastMessage["role"] != "tool" || !strings.Contains(lastMessage["content"].(string), "Loop Page") {
+				t.Fatalf("second request last message = %+v, want tool result content", lastMessage)
+			}
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Final answer after tool\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected request number %d", requestNumber)
+		}
+	}))
+	defer server.Close()
+	agentUnderTest := agent.NewEinoAgent(config.Config{
+		DeepSeekAPIKey:    "test-key",
+		DeepSeekBaseURL:   server.URL,
+		DeepSeekModel:     "deepseek-chat",
+		HTTPClientTimeout: time.Second,
+		FetchAllowPrivate: true,
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second, FetchAllowPrivate: true}))
+
+	events, errs := agentUnderTest.Stream(context.Background(), []agent.Message{
+		{Role: "user", Content: "fetch page"},
+	})
+	collected := collectAgentEvents(t, events, errs)
+
+	if len(collected) != 3 {
+		t.Fatalf("events len = %d, want tool_call, tool_result, final delta; events = %+v", len(collected), collected)
+	}
+	if collected[2].Kind != "delta" || collected[2].Text != "Final answer after tool" {
+		t.Fatalf("final event = %+v, want final assistant delta", collected[2])
+	}
+	mu.Lock()
+	requestCount := len(requests)
+	mu.Unlock()
+	if requestCount != 2 {
+		t.Fatalf("request count = %d, want tool call request plus final answer request", requestCount)
+	}
 }
 
 func TestFallbackAgentRunsFetchURLTool(t *testing.T) {
@@ -135,7 +218,8 @@ func TestFallbackAgentRunsFetchURLTool(t *testing.T) {
 	defer page.Close()
 	agentUnderTest := agent.NewEinoAgent(config.Config{
 		HTTPClientTimeout: time.Second,
-	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}))
+		FetchAllowPrivate: true,
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second, FetchAllowPrivate: true}))
 
 	events, errs := agentUnderTest.Stream(context.Background(), []agent.Message{
 		{Role: "user", Content: "fetch_url: " + page.URL},

@@ -84,6 +84,24 @@ func TestFetchURLRejectsNonHTTPURL(t *testing.T) {
 	}
 }
 
+func TestFetchURLRejectsLoopbackAddress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html><body>private data</body></html>"))
+	}))
+	defer server.Close()
+	registry := tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second})
+
+	_, err := registry.Execute(context.Background(), "fetch_url", map[string]any{
+		"url": server.URL,
+	})
+	if err == nil {
+		t.Fatal("Execute(fetch_url) error = nil, want SSRF validation error")
+	}
+	if !strings.Contains(err.Error(), "private") {
+		t.Fatalf("error = %q, want private address validation message", err.Error())
+	}
+}
+
 func TestFetchURLExtractsTitleAndVisibleText(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<!doctype html>
@@ -100,7 +118,7 @@ func TestFetchURLExtractsTitleAndVisibleText(t *testing.T) {
 </html>`))
 	}))
 	defer server.Close()
-	registry := tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second})
+	registry := tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second, FetchAllowPrivate: true})
 
 	result, err := registry.Execute(context.Background(), "fetch_url", map[string]any{
 		"url": server.URL,

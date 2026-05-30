@@ -19,13 +19,14 @@ import (
 )
 
 type Message struct {
-	Role    string
-	Content string
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type Event struct {
 	Kind       string
 	Text       string
+	ToolCallID string
 	ToolName   string
 	ToolArgs   map[string]any
 	ToolResult any
@@ -42,6 +43,8 @@ type DeepSeekAgent struct {
 	tools  tools.Registry
 	client tools.HTTPDoer
 }
+
+const maxToolIterations = 3
 
 func NewEinoAgent(cfg config.Config, registry tools.Registry) Agent {
 	return NewDeepSeekAgent(cfg, registry)
@@ -108,9 +111,30 @@ func (a *DeepSeekAgent) streamFallback(ctx context.Context, messages []Message, 
 }
 
 func (a *DeepSeekAgent) streamDeepSeek(ctx context.Context, messages []Message, events chan<- Event) error {
+	history := make([]deepSeekMessage, 0, len(messages))
+	for _, message := range messages {
+		history = append(history, deepSeekMessage{Role: message.Role, Content: message.Content})
+	}
+	for iteration := 0; iteration <= maxToolIterations; iteration++ {
+		followups, err := a.streamDeepSeekOnce(ctx, history, events)
+		if err != nil {
+			return err
+		}
+		if len(followups) == 0 {
+			return nil
+		}
+		if iteration == maxToolIterations {
+			return errors.New("deepseek tool iteration limit exceeded")
+		}
+		history = append(history, followups...)
+	}
+	return nil
+}
+
+func (a *DeepSeekAgent) streamDeepSeekOnce(ctx context.Context, messages []deepSeekMessage, events chan<- Event) ([]deepSeekMessage, error) {
 	endpoint, err := deepSeekEndpoint(a.cfg.DeepSeekBaseURL)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	body := map[string]any{
 		"model":    a.cfg.DeepSeekModel,
@@ -120,27 +144,27 @@ func (a *DeepSeekAgent) streamDeepSeek(ctx context.Context, messages []Message, 
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+a.cfg.DeepSeekAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("deepseek status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("deepseek status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return a.parseOpenAICompatibleStream(ctx, resp.Body, events)
 }
 
-func (a *DeepSeekAgent) parseOpenAICompatibleStream(ctx context.Context, body io.Reader, events chan<- Event) error {
+func (a *DeepSeekAgent) parseOpenAICompatibleStream(ctx context.Context, body io.Reader, events chan<- Event) ([]deepSeekMessage, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
 	pendingTools := map[int]*pendingToolCall{}
@@ -158,17 +182,17 @@ func (a *DeepSeekAgent) parseOpenAICompatibleStream(ctx context.Context, body io
 		}
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return err
+			return nil, err
 		}
 		for _, choice := range chunk.Choices {
 			if choice.Delta.ReasoningContent != "" {
 				if !send(ctx, events, Event{Kind: "reasoning", Text: choice.Delta.ReasoningContent}) {
-					return ctx.Err()
+					return nil, ctx.Err()
 				}
 			}
 			if choice.Delta.Content != "" {
 				if !send(ctx, events, Event{Kind: "delta", Text: choice.Delta.Content}) {
-					return ctx.Err()
+					return nil, ctx.Err()
 				}
 			}
 			for _, toolCall := range choice.Delta.ToolCalls {
@@ -176,6 +200,12 @@ func (a *DeepSeekAgent) parseOpenAICompatibleStream(ctx context.Context, body io
 				if pending == nil {
 					pending = &pendingToolCall{}
 					pendingTools[toolCall.Index] = pending
+				}
+				if toolCall.ID != "" {
+					pending.id = toolCall.ID
+				}
+				if toolCall.Type != "" {
+					pending.callType = toolCall.Type
 				}
 				if toolCall.Function.Name != "" {
 					pending.name = toolCall.Function.Name
@@ -185,9 +215,27 @@ func (a *DeepSeekAgent) parseOpenAICompatibleStream(ctx context.Context, body io
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	return a.executePendingToolCalls(ctx, pendingTools, events)
+}
+
+type deepSeekMessage struct {
+	Role       string           `json:"role"`
+	Content    string           `json:"content"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+}
+
+type openAIToolCall struct {
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type"`
+	Function openAIToolFunction `json:"function"`
+}
+
+type openAIToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type streamChunk struct {
@@ -197,6 +245,7 @@ type streamChunk struct {
 			ReasoningContent string `json:"reasoning_content"`
 			ToolCalls        []struct {
 				Index    int    `json:"index"`
+				ID       string `json:"id"`
 				Type     string `json:"type"`
 				Function struct {
 					Name      string `json:"name"`
@@ -209,13 +258,15 @@ type streamChunk struct {
 }
 
 type pendingToolCall struct {
+	id        string
+	callType  string
 	name      string
 	arguments string
 }
 
-func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTools map[int]*pendingToolCall, events chan<- Event) error {
+func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTools map[int]*pendingToolCall, events chan<- Event) ([]deepSeekMessage, error) {
 	if len(pendingTools) == 0 {
-		return nil
+		return nil, nil
 	}
 	indexes := make([]int, 0, len(pendingTools))
 	for index := range pendingTools {
@@ -231,18 +282,20 @@ func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTool
 		if strings.TrimSpace(pending.arguments) != "" {
 			if err := json.Unmarshal([]byte(pending.arguments), &args); err != nil {
 				if !send(ctx, events, Event{Kind: "tool_result", ToolName: pending.name, ToolError: err.Error()}) {
-					return ctx.Err()
+					return nil, ctx.Err()
 				}
 				continue
 			}
 		}
 		if !send(ctx, events, Event{Kind: "tool_call", ToolName: pending.name, ToolArgs: args}) {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 		start := time.Now()
 		result, err := a.tools.Execute(ctx, pending.name, args)
+		resultContent := mustJSONString(result)
 		resultEvent := Event{
 			Kind:       "tool_result",
+			ToolCallID: pending.id,
 			ToolName:   pending.name,
 			ToolArgs:   args,
 			ToolResult: result,
@@ -250,12 +303,49 @@ func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTool
 		}
 		if err != nil {
 			resultEvent.ToolError = err.Error()
+			resultContent = err.Error()
 		}
 		if !send(ctx, events, resultEvent) {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
+		callType := pending.callType
+		if callType == "" {
+			callType = "function"
+		}
+		toolCallID := pending.id
+		if toolCallID == "" {
+			toolCallID = fmt.Sprintf("tool_call_%d", index)
+		}
+		followups := []deepSeekMessage{
+			{
+				Role:    "assistant",
+				Content: "",
+				ToolCalls: []openAIToolCall{{
+					ID:   toolCallID,
+					Type: callType,
+					Function: openAIToolFunction{
+						Name:      pending.name,
+						Arguments: pending.arguments,
+					},
+				}},
+			},
+			{
+				Role:       "tool",
+				Content:    resultContent,
+				ToolCallID: toolCallID,
+			},
+		}
+		return followups, nil
 	}
-	return nil
+	return nil, nil
+}
+
+func mustJSONString(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "null"
+	}
+	return string(raw)
 }
 
 func toolDefinitions() []map[string]any {

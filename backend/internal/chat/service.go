@@ -210,6 +210,17 @@ func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEven
 			status = "error"
 		}
 		invocation := invocationFromAgentEvent(assistantID, event, status)
+		if persisted, err := s.conversations.CreateToolInvocation(context.WithoutCancel(ctx), conversation.CreateToolInvocationInput{
+			MessageID: assistantID,
+			ToolName:  invocation.ToolName,
+			Args:      invocation.Args,
+			Result:    invocation.Result,
+			Error:     invocation.Error,
+			LatencyMS: invocation.LatencyMS,
+			Status:    invocation.Status,
+		}); err == nil {
+			invocation = persisted
+		}
 		return sendEvent(ctx, output, StreamEvent{Type: "tool_result", MessageID: assistantID, Invocation: &invocation})
 	default:
 		if !sendEvent(ctx, output, StreamEvent{Type: "delta", MessageID: assistantID, Text: event.Text}) {
@@ -293,6 +304,9 @@ func trimTitle(prompt string) string {
 }
 
 func sendEvent(ctx context.Context, output chan<- StreamEvent, event StreamEvent) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	select {
 	case <-ctx.Done():
 		return false

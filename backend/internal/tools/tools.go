@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -30,10 +31,15 @@ func NewRegistry(cfg config.Config) Registry {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return validateFetchURL(req.URL, cfg.FetchAllowPrivate)
+		},
+	}
 	return Registry{tools: map[string]Tool{
 		"web_search": newWebSearchTool(cfg, client),
-		"fetch_url":  newFetchURLTool(client),
+		"fetch_url":  newFetchURLTool(client, cfg.FetchAllowPrivate),
 	}}
 }
 
@@ -109,11 +115,17 @@ func appendQuery(rawURL string, key string, value string) (string, error) {
 	return parsed.String(), nil
 }
 
-func newFetchURLTool(client HTTPDoer) Tool {
+func newFetchURLTool(client HTTPDoer, allowPrivate bool) Tool {
 	return func(ctx context.Context, args map[string]any) (map[string]any, error) {
 		rawURL := strings.TrimSpace(stringArg(args, "url"))
 		parsed, err := url.Parse(rawURL)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		if err != nil {
+			return nil, errors.New("url must be a valid http:// or https:// URL")
+		}
+		if err := validateFetchURL(parsed, allowPrivate); err != nil {
+			return nil, err
+		}
+		if parsed.Scheme == "" || parsed.Host == "" {
 			return nil, errors.New("url must be a valid http:// or https:// URL")
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
@@ -144,6 +156,39 @@ func newFetchURLTool(client HTTPDoer) Tool {
 			"text":  text,
 		}, nil
 	}
+}
+
+func validateFetchURL(parsed *url.URL, allowPrivate bool) error {
+	if parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("url must be a valid http:// or https:// URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("url must use http:// or https://")
+	}
+	if allowPrivate {
+		return nil
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errors.New("url must include a host")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("resolve host: %w", err)
+	}
+	for _, ip := range ips {
+		if isPrivateAddress(ip) {
+			return fmt.Errorf("fetch_url blocked private address %s", ip.String())
+		}
+	}
+	return nil
+}
+
+func isPrivateAddress(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
 func stringArg(args map[string]any, key string) string {

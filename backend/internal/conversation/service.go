@@ -9,6 +9,7 @@ import (
 
 	"ai-investment-assistant/backend/internal/store"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -61,6 +62,16 @@ type CreateMessageInput struct {
 type UpdateMessageInput struct {
 	Content   string
 	Reasoning string
+	Status    string
+}
+
+type CreateToolInvocationInput struct {
+	MessageID string
+	ToolName  string
+	Args      json.RawMessage
+	Result    json.RawMessage
+	Error     string
+	LatencyMS int64
 	Status    string
 }
 
@@ -199,6 +210,26 @@ func (s *Service) UpdateMessage(ctx context.Context, messageID string, input Upd
 		return ChatMessage{}, err
 	}
 	return messageDTO(row), nil
+}
+
+func (s *Service) CreateToolInvocation(ctx context.Context, input CreateToolInvocationInput) (ToolInvocation, error) {
+	row := store.ToolInvocation{
+		ID:        uuid.NewString(),
+		MessageID: input.MessageID,
+		ToolName:  input.ToolName,
+		Args:      datatypes.JSON(input.Args),
+		Result:    datatypes.JSON(input.Result),
+		Error:     input.Error,
+		LatencyMS: input.LatencyMS,
+		Status:    input.Status,
+	}
+	if row.Status == "" {
+		row.Status = "complete"
+	}
+	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return ToolInvocation{}, err
+	}
+	return toolInvocationDTO(row), nil
 }
 
 func (s *Service) EditMessage(ctx context.Context, messageID string, content string) (ChatMessage, error) {

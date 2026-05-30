@@ -150,6 +150,19 @@ func TestServiceMapsAgentToolEventsToStreamInvocations(t *testing.T) {
 	if string(collected[2].Invocation.Result) != `{"configured":false}` {
 		t.Fatalf("tool_result result = %s, want result JSON", collected[2].Invocation.Result)
 	}
+	messages, err := conversations.ListMessages(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("ListMessages() len = %d, want user and assistant", len(messages))
+	}
+	if len(messages[1].ToolInvocations) != 1 {
+		t.Fatalf("assistant tool invocations len = %d, want persisted tool_result", len(messages[1].ToolInvocations))
+	}
+	if messages[1].ToolInvocations[0].ToolName != "web_search" || messages[1].ToolInvocations[0].Status != "complete" {
+		t.Fatalf("persisted invocation = %+v, want complete web_search", messages[1].ToolInvocations[0])
+	}
 }
 
 func TestServicePersistsPartialAssistantWhenClientCancels(t *testing.T) {
