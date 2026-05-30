@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+var testDBSequence uint64
 
 func TestServiceCreatesAndRenamesConversation(t *testing.T) {
 	ctx := context.Background()
@@ -292,6 +295,87 @@ func TestServicePreventsOrphanMessagesAndToolInvocations(t *testing.T) {
 	}
 }
 
+func TestSQLiteTestDBIsIsolatedForRepeatedSetupInSameTest(t *testing.T) {
+	ctx := context.Background()
+	firstService, _ := newTestServiceWithDB(t)
+	if _, err := firstService.CreateConversation(ctx); err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+
+	secondService, _ := newTestServiceWithDB(t)
+	conversations, err := secondService.ListConversations(ctx)
+	if err != nil {
+		t.Fatalf("ListConversations() error = %v", err)
+	}
+	if len(conversations) != 0 {
+		t.Fatalf("second test DB conversation count = %d, want 0", len(conversations))
+	}
+}
+
+func TestServiceListMessagesIncludesToolInvocations(t *testing.T) {
+	ctx := context.Background()
+	svc, db := newTestServiceWithDB(t)
+
+	conversation, err := svc.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	message, err := svc.CreateMessage(ctx, CreateMessageInput{
+		ConversationID: conversation.ID,
+		Role:           "assistant",
+		Content:        "Answer with tool",
+		Status:         "complete",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage() error = %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&store.ToolInvocation{
+		ID:        "tool-list-messages",
+		MessageID: message.ID,
+		ToolName:  "web_search",
+		Args:      datatypes.JSON([]byte(`{"query":"AI stocks"}`)),
+		Result:    datatypes.JSON([]byte(`{"items":[{"title":"Result"}]}`)),
+		Error:     "",
+		LatencyMS: 123,
+		Status:    "complete",
+	}).Error; err != nil {
+		t.Fatalf("Create tool invocation error = %v", err)
+	}
+
+	messages, err := svc.ListMessages(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("ListMessages() len = %d, want 1", len(messages))
+	}
+	if len(messages[0].ToolInvocations) != 1 {
+		t.Fatalf("ToolInvocations len = %d, want 1", len(messages[0].ToolInvocations))
+	}
+	invocation := messages[0].ToolInvocations[0]
+	if invocation.ID != "tool-list-messages" {
+		t.Fatalf("ToolInvocation.ID = %q, want %q", invocation.ID, "tool-list-messages")
+	}
+	if invocation.MessageID != message.ID {
+		t.Fatalf("ToolInvocation.MessageID = %q, want %q", invocation.MessageID, message.ID)
+	}
+	if invocation.ToolName != "web_search" {
+		t.Fatalf("ToolInvocation.ToolName = %q, want %q", invocation.ToolName, "web_search")
+	}
+	if string(invocation.Args) != `{"query":"AI stocks"}` {
+		t.Fatalf("ToolInvocation.Args = %s", invocation.Args)
+	}
+	if string(invocation.Result) != `{"items":[{"title":"Result"}]}` {
+		t.Fatalf("ToolInvocation.Result = %s", invocation.Result)
+	}
+	if invocation.LatencyMS != 123 {
+		t.Fatalf("ToolInvocation.LatencyMS = %d, want 123", invocation.LatencyMS)
+	}
+	if invocation.Status != "complete" {
+		t.Fatalf("ToolInvocation.Status = %q, want %q", invocation.Status, "complete")
+	}
+}
+
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 
@@ -302,8 +386,9 @@ func newTestService(t *testing.T) *Service {
 func newTestServiceWithDB(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
 
+	sequence := atomic.AddUint64(&testDBSequence, 1)
 	dbName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-	db, err := openSQLiteTestDB(t.Context(), fmt.Sprintf("file:%s?mode=memory&cache=shared&_foreign_keys=on", dbName))
+	db, err := openSQLiteTestDB(t.Context(), fmt.Sprintf("file:%s_%d?mode=memory&cache=shared&_foreign_keys=on", dbName, sequence))
 	if err != nil {
 		t.Fatalf("openSQLiteTestDB() error = %v", err)
 	}

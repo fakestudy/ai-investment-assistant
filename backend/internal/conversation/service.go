@@ -121,6 +121,9 @@ func (s *Service) DeleteConversation(ctx context.Context, id string) error {
 func (s *Service) ListMessages(ctx context.Context, conversationID string) ([]ChatMessage, error) {
 	var rows []store.Message
 	if err := s.db.WithContext(ctx).
+		Preload("ToolInvocations", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at asc, id asc")
+		}).
 		Where("conversation_id = ?", conversationID).
 		Order("created_at asc, id asc").
 		Find(&rows).Error; err != nil {
@@ -209,13 +212,33 @@ func conversationDTO(row store.Conversation) ChatConversation {
 }
 
 func messageDTO(row store.Message) ChatMessage {
+	toolInvocations := make([]ToolInvocation, 0, len(row.ToolInvocations))
+	for _, invocation := range row.ToolInvocations {
+		toolInvocations = append(toolInvocations, toolInvocationDTO(invocation))
+	}
+
 	return ChatMessage{
-		ID:             row.ID,
-		ConversationID: row.ConversationID,
-		Role:           row.Role,
-		Content:        row.Content,
-		Reasoning:      row.Reasoning,
-		Status:         row.Status,
-		CreatedAt:      row.CreatedAt,
+		ID:              row.ID,
+		ConversationID:  row.ConversationID,
+		Role:            row.Role,
+		Content:         row.Content,
+		Reasoning:       row.Reasoning,
+		Status:          row.Status,
+		CreatedAt:       row.CreatedAt,
+		ToolInvocations: toolInvocations,
+	}
+}
+
+func toolInvocationDTO(row store.ToolInvocation) ToolInvocation {
+	return ToolInvocation{
+		ID:        row.ID,
+		MessageID: row.MessageID,
+		ToolName:  row.ToolName,
+		Args:      []byte(row.Args),
+		Result:    []byte(row.Result),
+		Error:     row.Error,
+		LatencyMS: row.LatencyMS,
+		Status:    row.Status,
+		CreatedAt: row.CreatedAt,
 	}
 }
