@@ -49,10 +49,7 @@ export function ChatMessageList() {
 			<ConversationContent className="mx-auto w-full max-w-3xl gap-7 px-6 py-8">
 				{messages.map((message, index) => {
 					const isLastAssistantMessage =
-						message.role === "assistant" &&
-						messages
-							.slice(index + 1)
-							.every((item) => item.role !== "assistant");
+						message.role === "assistant" && index === messages.length - 1;
 
 					return (
 						<ChatMessageItem
