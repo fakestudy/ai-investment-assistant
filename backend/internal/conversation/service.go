@@ -61,7 +61,7 @@ func NewService(db *gorm.DB) *Service {
 
 func (s *Service) ListConversations(ctx context.Context) ([]ChatConversation, error) {
 	var rows []store.Conversation
-	if err := s.db.WithContext(ctx).Order("updated_at desc").Find(&rows).Error; err != nil {
+	if err := s.db.WithContext(ctx).Order("updated_at desc, id asc").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 
@@ -100,6 +100,10 @@ func (s *Service) RenameConversation(ctx context.Context, id string, title strin
 
 func (s *Service) DeleteConversation(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		messageIDs := tx.Model(&store.Message{}).Select("id").Where("conversation_id = ?", id)
+		if err := tx.Where("message_id IN (?)", messageIDs).Delete(&store.ToolInvocation{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("conversation_id = ?", id).Delete(&store.Message{}).Error; err != nil {
 			return err
 		}
@@ -118,7 +122,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID string) ([]Ch
 	var rows []store.Message
 	if err := s.db.WithContext(ctx).
 		Where("conversation_id = ?", conversationID).
-		Order("created_at asc").
+		Order("created_at asc, id asc").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -143,7 +147,19 @@ func (s *Service) CreateMessage(ctx context.Context, input CreateMessageInput) (
 		row.Status = "complete"
 	}
 
-	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&store.Conversation{}).
+			Where("id = ?", input.ConversationID).
+			Update("updated_at", time.Now())
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Create(&row).Error
+	})
+	if err != nil {
 		return ChatMessage{}, err
 	}
 	return messageDTO(row), nil
@@ -159,8 +175,19 @@ func (s *Service) EditMessage(ctx context.Context, messageID string, content str
 		if err := tx.Save(&row).Error; err != nil {
 			return err
 		}
-		return tx.Where("conversation_id = ? AND created_at > ?", row.ConversationID, row.CreatedAt).
-			Delete(&store.Message{}).Error
+		followingMessages := tx.Model(&store.Message{}).
+			Select("id").
+			Where("conversation_id = ? AND (created_at > ? OR (created_at = ? AND id > ?))", row.ConversationID, row.CreatedAt, row.CreatedAt, row.ID)
+		if err := tx.Where("message_id IN (?)", followingMessages).Delete(&store.ToolInvocation{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("conversation_id = ? AND (created_at > ? OR (created_at = ? AND id > ?))", row.ConversationID, row.CreatedAt, row.CreatedAt, row.ID).
+			Delete(&store.Message{}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&store.Conversation{}).
+			Where("id = ?", row.ConversationID).
+			Update("updated_at", time.Now()).Error
 	})
 	if err != nil {
 		return ChatMessage{}, err
