@@ -27,20 +27,59 @@ type Registry struct {
 }
 
 func NewRegistry(cfg config.Config) Registry {
-	timeout := cfg.HTTPClientTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return validateFetchURL(req.URL, cfg.FetchAllowPrivate)
-		},
-	}
+	client := newHTTPClient(cfg)
 	return Registry{tools: map[string]Tool{
 		"web_search": newWebSearchTool(cfg, client),
 		"fetch_url":  newFetchURLTool(client, cfg.FetchAllowPrivate),
 	}}
+}
+
+func newHTTPClient(cfg config.Config) *http.Client {
+	timeout := cfg.HTTPClientTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: safeDialContext(cfg.FetchAllowPrivate),
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return validateFetchURL(req.URL, cfg.FetchAllowPrivate)
+		},
+	}
+}
+
+func safeDialContext(allowPrivate bool) func(context.Context, string, string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	return func(ctx context.Context, network string, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		if allowPrivate {
+			return dialer.DialContext(ctx, network, address)
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolve host: %w", err)
+		}
+		var lastErr error
+		for _, resolved := range ips {
+			if isPrivateAddress(resolved.IP) {
+				return nil, fmt.Errorf("fetch_url blocked private address %s", resolved.IP.String())
+			}
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, errors.New("host resolved to no addresses")
+	}
 }
 
 func (r Registry) Execute(ctx context.Context, name string, args map[string]any) (map[string]any, error) {

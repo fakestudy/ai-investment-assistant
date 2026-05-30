@@ -50,6 +50,7 @@ func TestWebSearchUsesConfiguredHTTPAdapter(t *testing.T) {
 		SearchAPIKey:      "search-key",
 		SearchBaseURL:     server.URL + "/search",
 		HTTPClientTimeout: time.Second,
+		FetchAllowPrivate: true,
 	})
 
 	result, err := registry.Execute(context.Background(), "web_search", map[string]any{

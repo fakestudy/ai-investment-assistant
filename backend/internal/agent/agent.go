@@ -273,17 +273,41 @@ func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTool
 		indexes = append(indexes, index)
 	}
 	sort.Ints(indexes)
+	assistantToolCalls := make([]openAIToolCall, 0, len(indexes))
+	toolMessages := make([]deepSeekMessage, 0, len(indexes))
 	for _, index := range indexes {
 		pending := pendingTools[index]
 		if pending == nil || pending.name == "" {
 			continue
 		}
+		callType := pending.callType
+		if callType == "" {
+			callType = "function"
+		}
+		toolCallID := pending.id
+		if toolCallID == "" {
+			toolCallID = fmt.Sprintf("tool_call_%d", index)
+		}
+		assistantToolCalls = append(assistantToolCalls, openAIToolCall{
+			ID:   toolCallID,
+			Type: callType,
+			Function: openAIToolFunction{
+				Name:      pending.name,
+				Arguments: pending.arguments,
+			},
+		})
 		args := map[string]any{}
 		if strings.TrimSpace(pending.arguments) != "" {
 			if err := json.Unmarshal([]byte(pending.arguments), &args); err != nil {
-				if !send(ctx, events, Event{Kind: "tool_result", ToolName: pending.name, ToolError: err.Error()}) {
+				message := "invalid tool arguments: " + err.Error()
+				if !send(ctx, events, Event{Kind: "tool_result", ToolCallID: toolCallID, ToolName: pending.name, ToolError: message}) {
 					return nil, ctx.Err()
 				}
+				toolMessages = append(toolMessages, deepSeekMessage{
+					Role:       "tool",
+					Content:    message,
+					ToolCallID: toolCallID,
+				})
 				continue
 			}
 		}
@@ -308,36 +332,22 @@ func (a *DeepSeekAgent) executePendingToolCalls(ctx context.Context, pendingTool
 		if !send(ctx, events, resultEvent) {
 			return nil, ctx.Err()
 		}
-		callType := pending.callType
-		if callType == "" {
-			callType = "function"
-		}
-		toolCallID := pending.id
-		if toolCallID == "" {
-			toolCallID = fmt.Sprintf("tool_call_%d", index)
-		}
-		followups := []deepSeekMessage{
-			{
-				Role:    "assistant",
-				Content: "",
-				ToolCalls: []openAIToolCall{{
-					ID:   toolCallID,
-					Type: callType,
-					Function: openAIToolFunction{
-						Name:      pending.name,
-						Arguments: pending.arguments,
-					},
-				}},
-			},
-			{
-				Role:       "tool",
-				Content:    resultContent,
-				ToolCallID: toolCallID,
-			},
-		}
-		return followups, nil
+		toolMessages = append(toolMessages, deepSeekMessage{
+			Role:       "tool",
+			Content:    resultContent,
+			ToolCallID: toolCallID,
+		})
 	}
-	return nil, nil
+	if len(assistantToolCalls) == 0 || len(toolMessages) == 0 {
+		return nil, nil
+	}
+	followups := []deepSeekMessage{{
+		Role:      "assistant",
+		Content:   "",
+		ToolCalls: assistantToolCalls,
+	}}
+	followups = append(followups, toolMessages...)
+	return followups, nil
 }
 
 func mustJSONString(value any) string {

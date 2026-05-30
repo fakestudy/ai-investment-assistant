@@ -211,6 +211,118 @@ func TestDeepSeekCompatibleStreamSendsToolResultBackForFinalAnswer(t *testing.T)
 	}
 }
 
+func TestDeepSeekCompatibleStreamExecutesAllPendingToolCallsInRound(t *testing.T) {
+	var mu sync.Mutex
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body error = %v", err)
+		}
+		mu.Lock()
+		requests = append(requests, body)
+		requestNumber := len(requests)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch requestNumber {
+		case 1:
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_search\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"AI\\\"}\"}},{\"index\":1,\"id\":\"call_fetch\",\"type\":\"function\",\"function\":{\"name\":\"fetch_url\",\"arguments\":\"{\\\"url\\\":\\\"http://127.0.0.1:1\\\"}\"}}]}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		case 2:
+			messages := body["messages"].([]any)
+			toolMessages := 0
+			for _, message := range messages {
+				item := message.(map[string]any)
+				if item["role"] == "tool" {
+					toolMessages++
+				}
+			}
+			if toolMessages != 2 {
+				t.Fatalf("second request tool messages = %d, want 2; messages = %+v", toolMessages, messages)
+			}
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Final after both tools\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected request number %d", requestNumber)
+		}
+	}))
+	defer server.Close()
+	agentUnderTest := agent.NewEinoAgent(config.Config{
+		DeepSeekAPIKey:    "test-key",
+		DeepSeekBaseURL:   server.URL,
+		DeepSeekModel:     "deepseek-chat",
+		HTTPClientTimeout: time.Second,
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}))
+
+	events, errs := agentUnderTest.Stream(context.Background(), []agent.Message{
+		{Role: "user", Content: "use two tools"},
+	})
+	collected := collectAgentEvents(t, events, errs)
+
+	if len(collected) != 5 {
+		t.Fatalf("events len = %d, want 2 calls, 2 results, final delta; events = %+v", len(collected), collected)
+	}
+	if collected[0].Kind != "tool_call" || collected[1].Kind != "tool_result" || collected[2].Kind != "tool_call" || collected[3].Kind != "tool_result" {
+		t.Fatalf("tool event sequence = %+v, want call/result for each pending tool", collected)
+	}
+	if collected[4].Kind != "delta" || collected[4].Text != "Final after both tools" {
+		t.Fatalf("final event = %+v, want final delta after both tools", collected[4])
+	}
+}
+
+func TestDeepSeekCompatibleStreamSendsMalformedToolArgsErrorToModelAndUI(t *testing.T) {
+	var mu sync.Mutex
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body error = %v", err)
+		}
+		mu.Lock()
+		requests = append(requests, body)
+		requestNumber := len(requests)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch requestNumber {
+		case 1:
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"bad_args\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\"}}]}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		case 2:
+			messages := body["messages"].([]any)
+			lastMessage := messages[len(messages)-1].(map[string]any)
+			if lastMessage["role"] != "tool" || !strings.Contains(lastMessage["content"].(string), "invalid tool arguments") {
+				t.Fatalf("second request last message = %+v, want malformed args tool error", lastMessage)
+			}
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Handled malformed args\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			t.Fatalf("unexpected request number %d", requestNumber)
+		}
+	}))
+	defer server.Close()
+	agentUnderTest := agent.NewEinoAgent(config.Config{
+		DeepSeekAPIKey:    "test-key",
+		DeepSeekBaseURL:   server.URL,
+		DeepSeekModel:     "deepseek-chat",
+		HTTPClientTimeout: time.Second,
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}))
+
+	events, errs := agentUnderTest.Stream(context.Background(), []agent.Message{
+		{Role: "user", Content: "bad args"},
+	})
+	collected := collectAgentEvents(t, events, errs)
+
+	if len(collected) != 2 {
+		t.Fatalf("events len = %d, want tool_result error and final delta; events = %+v", len(collected), collected)
+	}
+	if collected[0].Kind != "tool_result" || collected[0].ToolError == "" || !strings.Contains(collected[0].ToolError, "invalid tool arguments") {
+		t.Fatalf("first event = %+v, want UI tool_result with malformed args error", collected[0])
+	}
+	if collected[1].Kind != "delta" || collected[1].Text != "Handled malformed args" {
+		t.Fatalf("final event = %+v, want final delta after malformed args", collected[1])
+	}
+}
+
 func TestFallbackAgentRunsFetchURLTool(t *testing.T) {
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<html><title>Tool Page</title><body>Fetched body</body></html>"))
