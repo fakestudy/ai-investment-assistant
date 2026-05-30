@@ -1,65 +1,65 @@
-# Backend Gin and Eino Graph Design
+# Backend Gin 与 Eino Graph 改造设计
 
-## Goal
+## 目标
 
-Refactor the backend so the HTTP layer is explicitly Gin-based and the agent layer uses Eino as the real orchestration framework. The first implementation must keep the current chat API contract stable while making the agent runtime ready for future LangGraph-like graph configuration.
+改造 backend，使 HTTP 层明确采用 Gin，Agent 层真正使用 Eino 作为编排框架。第一版实现必须保持现有聊天 API 协议稳定，同时为后续类似 LangGraph 的图配置能力预留运行时边界。
 
-## Current State
+## 当前状态
 
-- `backend/internal/api` already uses Gin for routes and JSON handling.
-- `backend/internal/agent` exposes `NewEinoAgent`, but it currently wraps a hand-written DeepSeek/OpenAI-compatible streaming loop rather than Eino.
-- `backend/internal/chat` depends on a small `Agent` interface and converts agent events into the current SSE protocol.
-- The copied local `.env` remains ignored by git. Backend configuration must follow the existing variable names, especially `BFF_HTTP_ADDR` and `DEEPSEEK_*`.
+- `backend/internal/api` 已经使用 Gin 处理路由和 JSON。
+- `backend/internal/agent` 暴露了 `NewEinoAgent`，但当前只是包装手写的 DeepSeek/OpenAI-compatible streaming 循环，并没有真正使用 Eino。
+- `backend/internal/chat` 依赖一个很小的 `Agent` 接口，并把 agent 事件转换成当前 SSE 协议。
+- 本地复制过来的 `.env` 继续被 git ignore。backend 配置必须沿用现有变量名，尤其是 `BFF_HTTP_ADDR` 和 `DEEPSEEK_*`。
 
-## Non-Goals
+## 非目标
 
-- Do not change the frontend-facing REST or SSE protocol.
-- Do not introduce `OPENAI_*` aliases.
-- Do not build a full YAML/JSON graph DSL in this iteration.
-- Do not add authentication, RAG, deployment, or investment-domain workflows in this iteration.
+- 不修改前端依赖的 REST 或 SSE 协议。
+- 不引入 `OPENAI_*` 配置别名。
+- 本轮不实现完整 YAML/JSON graph DSL。
+- 本轮不新增鉴权、RAG、部署能力或投资领域工作流。
 
-## Recommended Approach
+## 推荐方案
 
-Use Gin for HTTP, Eino's official Go builder style for the agent runtime, and an internal `GraphSpec` type as the compatibility seam for future LangGraph-like configuration.
+HTTP 层使用 Gin，Agent runtime 使用 Eino 官方推荐的 Go builder 风格，并新增内部 `GraphSpec` 类型，作为未来支持类似 LangGraph 声明式配置的兼容层。
 
-This is the shortest path because Eino's documented workflow is code-first composition through ADK, `compose.NewGraph`, and component builders. A declarative config layer can be added later by parsing YAML/JSON into the same internal `GraphSpec` and compiling it through the same builder.
+这是当前最短路径。Eino 官方文档的主路径是代码式编排，包括 ADK、`compose.NewGraph` 和组件 builder。后续如果需要声明式配置，可以先把 YAML/JSON 解析成同一个内部 `GraphSpec`，再通过同一套 builder 编译成 Eino runtime。
 
-## Alternatives Considered
+## 备选方案
 
-### Single Eino ChatModelAgent Only
+### 只接入单个 Eino ChatModelAgent
 
-Replace the current DeepSeek loop with one Eino ChatModelAgent and tools.
+用一个 Eino ChatModelAgent 和 tools 替换当前 DeepSeek 手写循环。
 
-- Pros: fastest implementation.
-- Cons: weak boundary for future configurable graph workflows; likely requires another refactor.
+- 优点：实现最快。
+- 缺点：对未来可配置 graph 工作流的边界较弱，后续大概率还要再拆一次。
 
-### External YAML Graph First
+### 先实现外部 YAML Graph
 
-Define a LangGraph-like YAML/JSON schema first, then map it into Eino.
+先定义类似 LangGraph 的 YAML/JSON schema，再映射到 Eino。
 
-- Pros: looks closest to LangGraph immediately.
-- Cons: locks schema before real workflows exist and diverges from Eino's code-first official path.
+- 优点：一开始看起来最接近 LangGraph。
+- 缺点：在真实工作流不足时过早固化 schema，并且偏离 Eino 官方代码优先的实践路径。
 
-## Configuration
+## 配置
 
-The backend uses the existing environment variable names:
+backend 使用现有环境变量名：
 
-- `BFF_HTTP_ADDR`: Gin server bind address, for example `:8081`.
-- `DATABASE_URL`: PostgreSQL connection string.
-- `DEEPSEEK_API_KEY`: DeepSeek API key.
-- `DEEPSEEK_BASE_URL`: OpenAI-compatible DeepSeek base URL, default `https://api.deepseek.com`.
-- `DEEPSEEK_MODEL`: model name, default aligned with local config.
-- `DEEPSEEK_TIMEOUT_SECONDS`: model HTTP timeout.
+- `BFF_HTTP_ADDR`：Gin server 监听地址，例如 `:8081`。
+- `DATABASE_URL`：PostgreSQL 连接串。
+- `DEEPSEEK_API_KEY`：DeepSeek API key。
+- `DEEPSEEK_BASE_URL`：OpenAI-compatible DeepSeek base URL，默认 `https://api.deepseek.com`。
+- `DEEPSEEK_MODEL`：模型名称，默认与本地配置保持一致。
+- `DEEPSEEK_TIMEOUT_SECONDS`：模型 HTTP 调用超时。
 
-`config.Load()` should normalize `BFF_HTTP_ADDR` as a full server address instead of appending another colon. The model timeout should come from `DEEPSEEK_TIMEOUT_SECONDS`; any old `HTTP_CLIENT_TIMEOUT_SECONDS` usage should be removed or kept only as an explicit backward-compatible fallback if needed.
+`config.Load()` 应把 `BFF_HTTP_ADDR` 作为完整 server address 处理，不能再额外拼接冒号。模型超时应来自 `DEEPSEEK_TIMEOUT_SECONDS`；旧的 `HTTP_CLIENT_TIMEOUT_SECONDS` 应移除，除非明确需要作为向后兼容 fallback。
 
-## Architecture
+## 架构
 
-### HTTP Layer
+### HTTP 层
 
-`backend/internal/api` remains the only HTTP adapter. It owns Gin route registration, local CORS, request validation, HTTP error mapping, and SSE writing.
+`backend/internal/api` 继续作为唯一 HTTP adapter。它负责 Gin 路由注册、本地 CORS、请求校验、HTTP 错误映射和 SSE 写出。
 
-The public API remains:
+对外 API 保持不变：
 
 - `GET /api/health`
 - `GET /api/conversations`
@@ -70,39 +70,39 @@ The public API remains:
 - `PATCH /api/messages/:messageId`
 - `POST /api/chat/stream`
 
-### Chat Layer
+### Chat 层
 
-`backend/internal/chat` remains the orchestration boundary for conversation persistence and SSE event ordering. It should continue to depend on a small agent interface rather than importing Eino directly.
+`backend/internal/chat` 继续作为会话持久化和 SSE 事件顺序的编排边界。它应继续依赖一个小的 agent interface，而不是直接 import Eino。
 
-This preserves the current invariant:
+需要保持当前不变式：
 
-- Persist user message.
-- Persist assistant message with `streaming` status.
-- Emit `message_created`.
-- Stream agent events as `reasoning`, `delta`, `tool_call`, and `tool_result`.
-- Persist final assistant content and reasoning.
-- Emit optional `title`.
-- Emit `done` or `error`.
+- 持久化用户消息。
+- 持久化 `streaming` 状态的 assistant 消息。
+- 发送 `message_created`。
+- 把 agent 事件流式转换成 `reasoning`、`delta`、`tool_call`、`tool_result`。
+- 持久化最终 assistant content 和 reasoning。
+- 按需发送 `title`。
+- 发送 `done` 或 `error`。
 
-### Agent Layer
+### Agent 层
 
-`backend/internal/agent` becomes a real Eino runtime adapter. It should:
+`backend/internal/agent` 改造成真正的 Eino runtime adapter。它应负责：
 
-- Create an Eino OpenAI ChatModel using DeepSeek's OpenAI-compatible API.
-- Bind Eino tools converted from existing backend tools.
-- Build the first runtime through Eino's Go builder or ADK.
-- Convert Eino stream messages and tool events into the existing `agent.Event` contract.
-- Keep deterministic fallback behavior for missing `DEEPSEEK_API_KEY` so local tests and frontend flows still work.
+- 使用 DeepSeek 的 OpenAI-compatible API 创建 Eino OpenAI ChatModel。
+- 绑定由现有 backend tools 转换得到的 Eino tools。
+- 通过 Eino Go builder 或 ADK 构建第一版 runtime。
+- 把 Eino stream message 和 tool event 转换成现有 `agent.Event` contract。
+- 保留 `DEEPSEEK_API_KEY` 缺失时的确定性 fallback，保证本地测试和前端流程仍可运行。
 
-The exported constructor remains:
+导出的构造函数保持不变：
 
 ```go
 func NewEinoAgent(cfg config.Config, registry tools.Registry) Agent
 ```
 
-### Graph Runtime Seam
+### Graph Runtime 边界
 
-Introduce a small internal graph package or submodule under `backend/internal/agent` that defines:
+在 `backend/internal/agent` 下新增小的内部 graph package 或子模块，定义：
 
 ```go
 type GraphSpec struct {
@@ -115,79 +115,79 @@ type GraphSpec struct {
 }
 ```
 
-The first implementation may build one default graph in Go code. The important boundary is that the Eino runtime is created from `GraphSpec`, not hard-coded directly inside request handling.
+第一版可以在 Go 代码里构建一个默认 graph。关键边界是：Eino runtime 由 `GraphSpec` 创建，而不是在请求处理逻辑里硬编码。
 
-Future YAML/JSON support should only need:
+未来支持 YAML/JSON 时，只需要：
 
-- Parse config file into `GraphSpec`.
-- Validate node names, tool names, and edges.
-- Compile `GraphSpec` through the same Eino builder.
+- 把配置文件解析成 `GraphSpec`。
+- 校验 node name、tool name 和 edge。
+- 通过同一套 Eino builder 编译 `GraphSpec`。
 
-### Tool Layer
+### Tool 层
 
-Existing tools remain the source of business behavior:
+现有 tools 继续作为业务行为来源：
 
 - `web_search`
 - `fetch_url`
 
-They should be wrapped as Eino tools while preserving:
+它们应被包装成 Eino tools，同时保留：
 
-- Existing input names.
-- Existing output shape where practical.
-- Existing private-network fetch protections.
-- Existing deterministic messages when external search is not configured.
+- 现有输入字段名。
+- 尽量保持现有输出结构。
+- 现有私网 fetch 防护。
+- 外部搜索未配置时的确定性提示。
 
-## Data Flow
+## 数据流
 
-1. Gin receives `POST /api/chat/stream`.
-2. `chat.Service` validates the request and persists conversation state.
-3. `chat.Service` calls the `agent.Agent` interface with normalized message history.
-4. Eino runtime streams model output and invokes tools when requested by the model.
-5. `agent` adapter converts Eino output into current `agent.Event` values.
-6. `chat.Service` persists content/tool invocations and writes current SSE events.
-7. Gin SSE writer flushes each event to the frontend.
+1. Gin 接收 `POST /api/chat/stream`。
+2. `chat.Service` 校验请求并持久化会话状态。
+3. `chat.Service` 使用归一化后的消息历史调用 `agent.Agent` 接口。
+4. Eino runtime 流式输出模型内容，并在模型请求时调用工具。
+5. `agent` adapter 把 Eino 输出转换成当前 `agent.Event`。
+6. `chat.Service` 持久化内容和 tool invocation，并写出当前 SSE event。
+7. Gin SSE writer 把每个事件 flush 到前端。
 
-## Error Handling
+## 错误处理
 
-- Invalid JSON and validation failures return `400` with `{"message": "..."}`
-- Missing conversation or message rows return `404`.
-- Unexpected backend errors return `500` without leaking internal details.
-- Eino/model errors become stream `error` events and mark the assistant message `error`.
-- Request cancellation finalizes the assistant message with collected partial content and exits without retrying.
-- Missing `DEEPSEEK_API_KEY` uses deterministic fallback instead of failing startup.
+- 无效 JSON 和参数校验失败返回 `400`，响应体为 `{"message": "..."}`。
+- conversation 或 message 不存在时返回 `404`。
+- 未预期 backend 错误返回 `500`，不泄漏内部细节。
+- Eino/model 错误转换成 stream `error` event，并把 assistant message 标记为 `error`。
+- 请求取消时，用已收集的部分内容 finalize assistant message，然后退出，不做重试。
+- `DEEPSEEK_API_KEY` 缺失时使用确定性 fallback，而不是启动失败。
 
-## Testing
+## 测试
 
-Add or update focused tests for:
+新增或更新以下聚焦测试：
 
-- `config.Load()` reading `BFF_HTTP_ADDR` and `DEEPSEEK_TIMEOUT_SECONDS`.
-- Gin router health, validation, and stream handler compatibility.
-- Eino agent fallback behavior when `DEEPSEEK_API_KEY` is empty.
-- Tool wrapper behavior for `web_search` and `fetch_url`.
-- Chat service event ordering remains unchanged when agent emits deltas, reasoning, tool calls, and tool results.
+- `config.Load()` 正确读取 `BFF_HTTP_ADDR` 和 `DEEPSEEK_TIMEOUT_SECONDS`。
+- Gin router 的 health、参数校验和 stream handler 兼容性。
+- `DEEPSEEK_API_KEY` 为空时 Eino agent 的 fallback 行为。
+- `web_search` 和 `fetch_url` 的 Eino tool wrapper 行为。
+- agent 发出 delta、reasoning、tool call、tool result 时，chat service 事件顺序保持不变。
 
-External DeepSeek calls should not be required for automated tests.
+自动化测试不应依赖真实 DeepSeek 外部调用。
 
-## Verification
+## 验证
 
-Run from `backend/`:
+在 `backend/` 目录运行：
 
 ```bash
 go test ./...
 go build ./cmd/server
 ```
 
-Manual smoke test with local dependencies:
+本地依赖就绪后做手动 smoke test：
 
 ```bash
 go run ./cmd/server
 curl http://localhost:8081/api/health
 ```
 
-SSE smoke test should return `message_created`, `delta` or fallback content, optional tool events, optional `title`, and `done`.
+SSE smoke test 应返回 `message_created`、`delta` 或 fallback 内容、可选 tool events、可选 `title` 和 `done`。
 
-## Open Decisions
+## 已定决策
 
-- The first graph will be a single default chat-agent graph.
-- Declarative YAML/JSON loading is intentionally deferred until there is a second workflow that justifies external configuration.
-- The exact Eino API version should be pinned during implementation based on the current `go get` resolution and adjusted only if compile errors require it.
+- 第一版 graph 是一个默认 chat-agent graph。
+- 声明式 YAML/JSON 加载有意推迟，等出现第二个工作流、确实需要外部配置时再做。
+- Eino API 精确版本在实现阶段根据当前 `go get` 解析结果固定；只有编译错误要求时才调整。

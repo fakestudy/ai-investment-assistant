@@ -5,8 +5,8 @@
 技术栈：
 
 - **前端**：Next.js 16 + React 19 + Tailwind v4 + Zustand + shadcn/ui
-- **后端 BFF**：Go 1.25+，`chi` 路由，GORM + PostgreSQL，SSE 流式输出
-- **Agent**：基于 Eino 编排，调用 DeepSeek 等 LLM
+- **后端 BFF**：Go 1.25+，Gin 路由，GORM + PostgreSQL，SSE 流式输出
+- **Agent**：基于 Eino 编排，通过 DeepSeek OpenAI-compatible ChatModel 调用 LLM
 - **数据库**：PostgreSQL 16
 - **基础设施**：Docker / Docker Compose，`mise` 管理多语言工具链
 
@@ -43,7 +43,11 @@ cp .env.example .env
 
 按需填入下列关键变量（其他保留默认即可）：
 
-- `DEEPSEEK_API_KEY`：必填，否则 Agent 无法调用 LLM
+- `BFF_HTTP_ADDR`：backend Gin HTTP 监听地址，例如 `:8081`
+- `DEEPSEEK_API_KEY`：DeepSeek API key；配置后 Agent 通过 Eino OpenAI-compatible ChatModel 调用 DeepSeek，未配置时使用本地 fallback
+- `DEEPSEEK_BASE_URL`：DeepSeek OpenAI-compatible base URL，默认 `https://api.deepseek.com`
+- `DEEPSEEK_MODEL`：DeepSeek 模型名
+- `DEEPSEEK_TIMEOUT_SECONDS`：DeepSeek HTTP 调用超时
 - `DATABASE_URL`：默认指向 docker-compose 内的 postgres
 - `JWT_SECRET`、`INITIAL_USER_*`：本地登录鉴权使用
 
