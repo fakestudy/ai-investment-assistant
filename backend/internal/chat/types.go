@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 
 	"ai-investment-assistant/backend/internal/conversation"
 )
@@ -24,6 +25,23 @@ type StreamEvent struct {
 	Invocation     *ToolInvocation `json:"invocation,omitempty"`
 	ConversationID string          `json:"conversationId,omitempty"`
 	Title          string          `json:"title,omitempty"`
+}
+
+func (e StreamEvent) MarshalJSON() ([]byte, error) {
+	if e.Type == "error" {
+		return json.Marshal(struct {
+			Type      string `json:"type"`
+			MessageID string `json:"messageId,omitempty"`
+			Message   string `json:"message,omitempty"`
+		}{
+			Type:      e.Type,
+			MessageID: e.MessageID,
+			Message:   e.Text,
+		})
+	}
+
+	type streamEvent StreamEvent
+	return json.Marshal(streamEvent(e))
 }
 
 type AgentMessage struct {

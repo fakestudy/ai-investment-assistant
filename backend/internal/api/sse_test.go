@@ -33,6 +33,24 @@ func TestWriteSSEEventsWritesDataLinesAndFlushes(t *testing.T) {
 	}
 }
 
+func TestWriteSSEEventsSerializesErrorTextAsMessage(t *testing.T) {
+	events := make(chan chat.StreamEvent, 1)
+	events <- chat.StreamEvent{Type: "error", MessageID: "assistant-id", Text: "rate limited"}
+	close(events)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/chat/stream", nil)
+
+	writeSSEEvents(response, request, events)
+
+	body := response.Body.String()
+	if !strings.Contains(body, "data: {\"type\":\"error\",\"messageId\":\"assistant-id\",\"message\":\"rate limited\"}\n\n") {
+		t.Fatalf("SSE body = %q, want error message field for frontend contract", body)
+	}
+	if strings.Contains(body, "\"text\":\"rate limited\"") {
+		t.Fatalf("SSE body = %q, must not encode error text as text field", body)
+	}
+}
+
 func TestRouterStreamsChatSSE(t *testing.T) {
 	router, conversations := newTestRouter(t)
 	created, err := conversations.CreateConversation(t.Context())

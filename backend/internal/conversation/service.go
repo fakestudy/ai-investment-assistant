@@ -14,6 +14,8 @@ import (
 
 const defaultConversationTitle = "New chat"
 
+var ErrNotFound = gorm.ErrRecordNotFound
+
 type Service struct {
 	db *gorm.DB
 }

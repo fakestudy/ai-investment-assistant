@@ -38,17 +38,23 @@ func (s *Service) Stream(ctx context.Context, request StreamChatRequest) (<-chan
 	if conversationID == "" {
 		return nil, ValidationError{Message: "conversationId is required"}
 	}
-	if messageText == "" {
+	if messageText == "" && strings.TrimSpace(request.RegenerateFromMessageID) == "" {
 		return nil, ValidationError{Message: "message is required"}
 	}
 
-	if _, err := s.conversations.CreateMessage(ctx, conversation.CreateMessageInput{
-		ConversationID: conversationID,
-		Role:           "user",
-		Content:        messageText,
-		Status:         "complete",
-	}); err != nil {
+	prompt, shouldCreateUser, err := s.resolvePrompt(ctx, conversationID, messageText, request)
+	if err != nil {
 		return nil, err
+	}
+	if shouldCreateUser {
+		if _, err := s.conversations.CreateMessage(ctx, conversation.CreateMessageInput{
+			ConversationID: conversationID,
+			Role:           "user",
+			Content:        prompt,
+			Status:         "complete",
+		}); err != nil {
+			return nil, err
+		}
 	}
 	assistant, err := s.conversations.CreateMessage(ctx, conversation.CreateMessageInput{
 		ConversationID: conversationID,
@@ -60,54 +66,121 @@ func (s *Service) Stream(ctx context.Context, request StreamChatRequest) (<-chan
 	}
 
 	output := make(chan StreamEvent)
-	go s.runStream(ctx, conversationID, messageText, assistant, output)
+	go s.runStream(ctx, conversationID, prompt, assistant, output)
 	return output, nil
+}
+
+func (s *Service) resolvePrompt(ctx context.Context, conversationID string, messageText string, request StreamChatRequest) (string, bool, error) {
+	if parentID := strings.TrimSpace(request.ParentMessageID); parentID != "" {
+		parent, err := s.findMessage(ctx, conversationID, parentID)
+		if err != nil {
+			return "", false, err
+		}
+		if messageText != "" {
+			return messageText, false, nil
+		}
+		return parent.Content, false, nil
+	}
+
+	if regenerateID := strings.TrimSpace(request.RegenerateFromMessageID); regenerateID != "" {
+		message, err := s.findMessage(ctx, conversationID, regenerateID)
+		if err != nil {
+			return "", false, err
+		}
+		if messageText != "" {
+			return messageText, false, nil
+		}
+		prompt := message.Content
+		if message.Role == "assistant" {
+			if previous, ok := s.previousUserMessage(ctx, conversationID, message.ID); ok {
+				prompt = previous.Content
+			}
+		}
+		return prompt, false, nil
+	}
+
+	return messageText, true, nil
+}
+
+func (s *Service) findMessage(ctx context.Context, conversationID string, messageID string) (conversation.ChatMessage, error) {
+	messages, err := s.conversations.ListMessages(ctx, conversationID)
+	if err != nil {
+		return conversation.ChatMessage{}, err
+	}
+	for _, message := range messages {
+		if message.ID == messageID {
+			return message, nil
+		}
+	}
+	return conversation.ChatMessage{}, conversation.ErrNotFound
+}
+
+func (s *Service) previousUserMessage(ctx context.Context, conversationID string, beforeMessageID string) (conversation.ChatMessage, bool) {
+	messages, err := s.conversations.ListMessages(ctx, conversationID)
+	if err != nil {
+		return conversation.ChatMessage{}, false
+	}
+	var previous conversation.ChatMessage
+	for _, message := range messages {
+		if message.ID == beforeMessageID {
+			return previous, previous.ID != ""
+		}
+		if message.Role == "user" {
+			previous = message
+		}
+	}
+	return conversation.ChatMessage{}, false
 }
 
 func (s *Service) runStream(ctx context.Context, conversationID string, prompt string, assistant conversation.ChatMessage, output chan<- StreamEvent) {
 	defer close(output)
 
 	if !sendEvent(ctx, output, StreamEvent{Type: "message_created", Message: &assistant}) {
+		s.finalizeCanceled(ctx, assistant.ID, "", "")
 		return
 	}
 
 	agentEvents, agentErrors := s.agent.Stream(ctx, []AgentMessage{{Role: "user", Content: prompt}})
 	var content strings.Builder
 	var reasoning strings.Builder
-	for event := range agentEvents {
-		switch event.Kind {
-		case "reasoning":
-			reasoning.WriteString(event.Text)
-			if !sendEvent(ctx, output, StreamEvent{Type: "reasoning", MessageID: assistant.ID, Text: event.Text}) {
+	eventsOpen := true
+	for eventsOpen {
+		select {
+		case <-ctx.Done():
+			s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
+			return
+		case err, ok := <-agentErrors:
+			if ok && err != nil {
+				s.finalizeError(ctx, assistant.ID, content.String(), reasoning.String(), err)
+				_ = sendEvent(ctx, output, StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
 				return
 			}
-		case "tool_call":
-			if !sendEvent(ctx, output, StreamEvent{Type: "tool_call", MessageID: assistant.ID, Invocation: event.Invocation}) {
-				return
+			if !ok {
+				agentErrors = nil
 			}
-		case "tool_result":
-			if !sendEvent(ctx, output, StreamEvent{Type: "tool_result", MessageID: assistant.ID, Invocation: event.Invocation}) {
-				return
+		case event, ok := <-agentEvents:
+			if !ok {
+				eventsOpen = false
+				continue
 			}
-		default:
-			content.WriteString(event.Text)
-			if !sendEvent(ctx, output, StreamEvent{Type: "delta", MessageID: assistant.ID, Text: event.Text}) {
+			if !s.handleAgentEvent(ctx, output, assistant.ID, event, &content, &reasoning) {
+				s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
 				return
 			}
 		}
 	}
 
-	if err := firstAgentError(agentErrors); err != nil {
-		_, _ = s.conversations.UpdateMessage(ctx, assistant.ID, conversation.UpdateMessageInput{
-			Content:   content.String(),
-			Reasoning: reasoning.String(),
-			Status:    "error",
-		})
-		_ = sendEvent(ctx, output, StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
-		return
+	select {
+	case err, ok := <-agentErrors:
+		if ok && err != nil {
+			s.finalizeError(ctx, assistant.ID, content.String(), reasoning.String(), err)
+			_ = sendEvent(ctx, output, StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
+			return
+		}
+	default:
 	}
 
-	if _, err := s.conversations.UpdateMessage(ctx, assistant.ID, conversation.UpdateMessageInput{
+	if _, err := s.conversations.UpdateMessage(context.WithoutCancel(ctx), assistant.ID, conversation.UpdateMessageInput{
 		Content:   content.String(),
 		Reasoning: reasoning.String(),
 		Status:    "complete",
@@ -116,12 +189,43 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 		return
 	}
 
-	if title, ok := s.renameDefaultConversation(ctx, conversationID, prompt); ok {
+	if title, ok := s.renameDefaultConversation(context.WithoutCancel(ctx), conversationID, prompt); ok {
 		if !sendEvent(ctx, output, StreamEvent{Type: "title", ConversationID: conversationID, Title: title}) {
 			return
 		}
 	}
 	_ = sendEvent(ctx, output, StreamEvent{Type: "done", MessageID: assistant.ID})
+}
+
+func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEvent, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder) bool {
+	switch event.Kind {
+	case "reasoning":
+		reasoning.WriteString(event.Text)
+		return sendEvent(ctx, output, StreamEvent{Type: "reasoning", MessageID: assistantID, Text: event.Text})
+	case "tool_call":
+		return sendEvent(ctx, output, StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: event.Invocation})
+	case "tool_result":
+		return sendEvent(ctx, output, StreamEvent{Type: "tool_result", MessageID: assistantID, Invocation: event.Invocation})
+	default:
+		content.WriteString(event.Text)
+		return sendEvent(ctx, output, StreamEvent{Type: "delta", MessageID: assistantID, Text: event.Text})
+	}
+}
+
+func (s *Service) finalizeCanceled(ctx context.Context, assistantID string, content string, reasoning string) {
+	_, _ = s.conversations.UpdateMessage(context.WithoutCancel(ctx), assistantID, conversation.UpdateMessageInput{
+		Content:   content,
+		Reasoning: reasoning,
+		Status:    "cancelled",
+	})
+}
+
+func (s *Service) finalizeError(ctx context.Context, assistantID string, content string, reasoning string, err error) {
+	_, _ = s.conversations.UpdateMessage(context.WithoutCancel(ctx), assistantID, conversation.UpdateMessageInput{
+		Content:   content,
+		Reasoning: reasoning,
+		Status:    "error",
+	})
 }
 
 func (s *Service) renameDefaultConversation(ctx context.Context, conversationID string, prompt string) (string, bool) {
@@ -153,15 +257,6 @@ func trimTitle(prompt string) string {
 	}
 	runes := []rune(title)
 	return string(runes[:maxRunes])
-}
-
-func firstAgentError(errors <-chan error) error {
-	for err := range errors {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func sendEvent(ctx context.Context, output chan<- StreamEvent, event StreamEvent) bool {
