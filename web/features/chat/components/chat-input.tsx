@@ -39,10 +39,10 @@ export function ChatInput() {
 	};
 
 	return (
-		<footer className="shrink-0 border-zinc-100 border-t bg-white px-6 pt-4 pb-5">
+		<footer className="shrink-0 bg-white px-6 pt-4 pb-5">
 			<div className="mx-auto w-full max-w-3xl">
 				<form
-					className="rounded-3xl border border-zinc-200 bg-white p-2 shadow-[0_8px_28px_rgba(15,23,42,0.08)]"
+					className="rounded-3xl border border-zinc-200 bg-white p-2 shadow-[0_14px_44px_rgba(15,23,42,0.10)]"
 					onSubmit={(event) => {
 						event.preventDefault();
 						submitMessage();
@@ -51,7 +51,7 @@ export function ChatInput() {
 					<div className="flex items-end gap-2">
 						<Textarea
 							aria-label="Message"
-							className="max-h-52 min-h-12 resize-none border-0 bg-transparent px-3 py-3 text-[15px] shadow-none focus-visible:ring-0"
+							className="max-h-52 min-h-12 resize-none border-0 bg-transparent px-3 py-3 text-[15px] text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0"
 							disabled={isStreaming}
 							onChange={(event) => setDraft(event.target.value)}
 							onKeyDown={handleKeyDown}

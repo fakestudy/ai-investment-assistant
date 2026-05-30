@@ -85,14 +85,14 @@ export function ChatMessageItem({
 			<MessageContent
 				className={cn(
 					isUser
-						? "max-w-[75%] rounded-3xl bg-zinc-100 px-4 py-3 text-zinc-900"
+						? "max-w-[75%] rounded-3xl bg-zinc-100 px-4 py-3 text-zinc-900 shadow-sm"
 						: "w-full max-w-none text-zinc-900",
 				)}
 			>
 				{isEditing ? (
 					<div className="w-[min(42rem,75vw)] space-y-3">
 						<Textarea
-							className="min-h-24 resize-none border-zinc-200 bg-white text-sm"
+							className="min-h-24 resize-none rounded-2xl border-zinc-200 bg-white text-sm"
 							onChange={(event) => setDraft(event.target.value)}
 							value={draft}
 						/>
@@ -150,7 +150,7 @@ export function ChatMessageItem({
 			{!isEditing && (
 				<MessageToolbar
 					className={cn(
-						"mt-1 justify-start opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
+						"mt-1 justify-start text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
 						isUser && "justify-end",
 					)}
 				>

@@ -30,10 +30,10 @@ function ConversationRow({
 	return (
 		<div
 			className={[
-				"group flex items-center gap-1 rounded-lg px-2 py-1.5 transition-colors",
+				"group flex items-center gap-1 rounded-xl px-2 py-1.5 transition-colors",
 				isActive
 					? "bg-white shadow-sm ring-1 ring-zinc-200"
-					: "hover:bg-zinc-100",
+					: "hover:bg-white/80",
 			].join(" ")}
 		>
 			<button
@@ -95,9 +95,9 @@ export function ChatSidebar() {
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
 	return (
-		<aside className="flex w-[260px] shrink-0 flex-col border-zinc-200 border-r bg-zinc-50 p-3">
+		<aside className="flex w-[260px] shrink-0 flex-col border-zinc-200 border-r bg-zinc-50/95 p-3">
 			<button
-				className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 font-medium text-sm text-zinc-900 shadow-sm transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+				className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 font-medium text-sm text-zinc-900 shadow-sm transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
 				disabled={isLoadingConversations}
 				onClick={() => {
 					void createNewConversation();
@@ -107,7 +107,7 @@ export function ChatSidebar() {
 				<PlusIcon className="size-4" />
 				New chat
 			</button>
-			<nav className="mt-4 flex flex-1 flex-col gap-1 overflow-y-auto">
+			<nav className="mt-4 flex flex-1 flex-col gap-1 overflow-y-auto pr-1">
 				{isLoadingConversations ? (
 					<div
 						aria-live="polite"

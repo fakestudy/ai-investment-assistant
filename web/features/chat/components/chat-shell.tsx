@@ -13,7 +13,7 @@ export function ChatShell() {
 	}, [loadConversations]);
 
 	return (
-		<div className="flex h-screen bg-white text-zinc-950">
+		<div className="flex h-screen bg-[linear-gradient(180deg,#fafafa_0%,#ffffff_42%)] text-zinc-950">
 			<ChatSidebar />
 			<ChatMain />
 		</div>
