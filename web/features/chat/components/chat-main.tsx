@@ -1,3 +1,5 @@
+import { ChatMessageList } from "./chat-message-list";
+
 export function ChatMain() {
 	return (
 		<main className="flex min-w-0 flex-1 flex-col bg-white">
@@ -6,10 +8,8 @@ export function ChatMain() {
 					AI Chat Assistant
 				</h1>
 			</header>
-			<section className="flex flex-1 items-center justify-center px-6">
-				<p className="font-semibold text-3xl text-zinc-900 tracking-tight">
-					How can I help?
-				</p>
+			<section className="flex min-h-0 flex-1 flex-col">
+				<ChatMessageList />
 			</section>
 		</main>
 	);
