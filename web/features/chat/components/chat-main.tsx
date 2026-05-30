@@ -1,3 +1,4 @@
+import { ChatInput } from "./chat-input";
 import { ChatMessageList } from "./chat-message-list";
 
 export function ChatMain() {
@@ -10,6 +11,7 @@ export function ChatMain() {
 			</header>
 			<section className="flex min-h-0 flex-1 flex-col">
 				<ChatMessageList />
+				<ChatInput />
 			</section>
 		</main>
 	);
