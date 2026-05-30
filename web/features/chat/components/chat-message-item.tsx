@@ -82,70 +82,68 @@ export function ChatMessageItem({
 			className={cn("max-w-full", isUser ? "items-end" : "items-start")}
 			from={isUser ? "user" : "assistant"}
 		>
-			<MessageContent
-				className={cn(
-					isUser
-						? "max-w-[75%] rounded-3xl bg-zinc-100 px-4 py-3 text-zinc-900 shadow-sm"
-						: "w-full max-w-none text-zinc-900",
-				)}
-			>
-				{isEditing ? (
-					<div className="w-[min(42rem,75vw)] space-y-3">
-						<Textarea
-							className="min-h-24 resize-none rounded-2xl border-zinc-200 bg-white text-sm"
-							onChange={(event) => setDraft(event.target.value)}
-							value={draft}
-						/>
-						<div className="flex justify-end gap-2">
-							<Button
-								disabled={isSaving}
-								onClick={() => {
-									setIsEditing(false);
-									setDraft(message.content);
-								}}
-								size="sm"
-								type="button"
-								variant="ghost"
-							>
-								Cancel
-							</Button>
-							<Button
-								disabled={isSaving || !draft.trim()}
-								onClick={saveEdit}
-								size="sm"
-								type="button"
-							>
-								Save
-							</Button>
-						</div>
+			{isEditing ? (
+				<div className="w-full max-w-[min(42rem,75vw)] space-y-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+					<Textarea
+						className="min-h-24 resize-none rounded-2xl border-zinc-200 bg-white text-sm"
+						onChange={(event) => setDraft(event.target.value)}
+						value={draft}
+					/>
+					<div className="flex justify-end gap-2">
+						<Button
+							disabled={isSaving}
+							onClick={() => {
+								setIsEditing(false);
+								setDraft(message.content);
+							}}
+							size="sm"
+							type="button"
+							variant="ghost"
+						>
+							Cancel
+						</Button>
+						<Button
+							disabled={isSaving || !draft.trim()}
+							onClick={saveEdit}
+							size="sm"
+							type="button"
+						>
+							Save
+						</Button>
 					</div>
-				) : (
-					<>
-						{message.reasoning && (
-							<Reasoning isStreaming={isStreaming}>
-								<ReasoningTrigger />
-								<ReasoningContent>{message.reasoning}</ReasoningContent>
-							</Reasoning>
-						)}
-						{message.content ? (
-							isUser ? (
-								<p className="whitespace-pre-wrap">{message.content}</p>
-							) : (
-								<MessageResponse isAnimating={isStreaming}>
-									{message.content}
-								</MessageResponse>
-							)
+				</div>
+			) : (
+				<MessageContent
+					className={cn(
+						isUser
+							? "max-w-[75%] rounded-3xl bg-zinc-100 px-4 py-3 text-zinc-900 shadow-sm"
+							: "w-full max-w-none text-zinc-900",
+					)}
+				>
+					{message.reasoning && (
+						<Reasoning isStreaming={isStreaming}>
+							<ReasoningTrigger />
+							<ReasoningContent>{message.reasoning}</ReasoningContent>
+						</Reasoning>
+					)}
+					{message.content ? (
+						isUser ? (
+							<p className="whitespace-pre-wrap">{message.content}</p>
 						) : (
-							<p className="text-muted-foreground text-sm">
-								{isStreaming ? "Thinking..." : "No content"}
-							</p>
-						)}
-						{message.toolInvocations?.map((invocation) => (
-							<ToolInvocationCard invocation={invocation} key={invocation.id} />
-						))}
-					</>
-				)}
-			</MessageContent>
+							<MessageResponse isAnimating={isStreaming}>
+								{message.content}
+							</MessageResponse>
+						)
+					) : (
+						<p className="text-muted-foreground text-sm">
+							{isStreaming ? "Thinking..." : "No content"}
+						</p>
+					)}
+					{message.toolInvocations?.map((invocation) => (
+						<ToolInvocationCard invocation={invocation} key={invocation.id} />
+					))}
+				</MessageContent>
+			)}
 
 			{!isEditing && (
 				<MessageToolbar
