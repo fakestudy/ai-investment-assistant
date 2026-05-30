@@ -189,15 +189,21 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEvent, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder) bool {
 	switch event.Kind {
 	case "reasoning":
+		if !sendEvent(ctx, output, StreamEvent{Type: "reasoning", MessageID: assistantID, Text: event.Text}) {
+			return false
+		}
 		reasoning.WriteString(event.Text)
-		return sendEvent(ctx, output, StreamEvent{Type: "reasoning", MessageID: assistantID, Text: event.Text})
+		return true
 	case "tool_call":
 		return sendEvent(ctx, output, StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: event.Invocation})
 	case "tool_result":
 		return sendEvent(ctx, output, StreamEvent{Type: "tool_result", MessageID: assistantID, Invocation: event.Invocation})
 	default:
+		if !sendEvent(ctx, output, StreamEvent{Type: "delta", MessageID: assistantID, Text: event.Text}) {
+			return false
+		}
 		content.WriteString(event.Text)
-		return sendEvent(ctx, output, StreamEvent{Type: "delta", MessageID: assistantID, Text: event.Text})
+		return true
 	}
 }
 

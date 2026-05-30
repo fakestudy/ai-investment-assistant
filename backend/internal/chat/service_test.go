@@ -161,6 +161,56 @@ func TestServicePersistsPartialAssistantWhenClientCancels(t *testing.T) {
 	}
 }
 
+func TestServiceDoesNotPersistDeltaBlockedByClientCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	agent := newTwoStepAgent(
+		AgentEvent{Kind: "delta", Text: "sent"},
+		AgentEvent{Kind: "delta", Text: " unsent"},
+	)
+	svc := NewService(conversations, agent)
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID: created.ID,
+		Message:        "Cancel while second delta is blocked",
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	first := <-events
+	if first.Type != "message_created" {
+		t.Fatalf("first event type = %q, want message_created", first.Type)
+	}
+	firstDelta := <-events
+	if firstDelta.Type != "delta" || firstDelta.Text != "sent" {
+		t.Fatalf("first delta = %+v, want sent delta", firstDelta)
+	}
+
+	agent.releaseSecond()
+	waitForSignal(t, agent.secondDelivered, "second agent event to be received by service")
+	cancel()
+	waitForClosedEvents(t, events)
+
+	messages, err := conversations.ListMessages(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("ListMessages() len = %d, want 2", len(messages))
+	}
+	if messages[1].Content != "sent" {
+		t.Fatalf("assistant content after blocked cancellation = %q, want only successfully sent delta", messages[1].Content)
+	}
+	if strings.Contains(messages[1].Content, "unsent") {
+		t.Fatalf("assistant content after blocked cancellation = %q, must not include unsent delta", messages[1].Content)
+	}
+}
+
 func TestServiceReadsAgentErrorsWithoutWaitingForEventsToClose(t *testing.T) {
 	ctx := context.Background()
 	conversations := newTestConversationService(t)
@@ -405,6 +455,52 @@ func (a *delayedFinalErrorAgent) Stream(ctx context.Context, messages []AgentMes
 }
 
 func (a *delayedFinalErrorAgent) releaseError() {
+	close(a.release)
+}
+
+type twoStepAgent struct {
+	first           AgentEvent
+	second          AgentEvent
+	release         chan struct{}
+	secondDelivered chan struct{}
+}
+
+func newTwoStepAgent(first AgentEvent, second AgentEvent) *twoStepAgent {
+	return &twoStepAgent{
+		first:           first,
+		second:          second,
+		release:         make(chan struct{}),
+		secondDelivered: make(chan struct{}),
+	}
+}
+
+func (a *twoStepAgent) Stream(ctx context.Context, messages []AgentMessage) (<-chan AgentEvent, <-chan error) {
+	events := make(chan AgentEvent)
+	errs := make(chan error)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		select {
+		case <-ctx.Done():
+			errs <- ctx.Err()
+			return
+		case events <- a.first:
+		}
+		select {
+		case <-ctx.Done():
+			errs <- ctx.Err()
+			return
+		case <-a.release:
+		}
+		events <- a.second
+		close(a.secondDelivered)
+		<-ctx.Done()
+		errs <- ctx.Err()
+	}()
+	return events, errs
+}
+
+func (a *twoStepAgent) releaseSecond() {
 	close(a.release)
 }
 
