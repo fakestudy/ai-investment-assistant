@@ -130,6 +130,7 @@ const appendOptimisticUserMessage = (
 const reduceStreamEvent = (
 	state: ChatState,
 	event: ChatStreamEvent,
+	streamConversationId: string,
 ): Partial<ChatState> => {
 	if (event.type === "title") {
 		return {
@@ -142,18 +143,17 @@ const reduceStreamEvent = (
 	}
 
 	if (event.type === "error") {
-		const conversationId = state.activeConversationId;
 		const nextState: Partial<ChatState> = {
 			isStreaming: false,
 			abortController: undefined,
 			error: { message: event.message, scope: "stream" },
 		};
 
-		if (conversationId && event.messageId) {
+		if (event.messageId) {
 			nextState.messagesByConversationId = {
 				...state.messagesByConversationId,
-				[conversationId]: updateMessage(
-					state.messagesByConversationId[conversationId] ?? [],
+				[streamConversationId]: updateMessage(
+					state.messagesByConversationId[streamConversationId] ?? [],
 					event.messageId,
 					(message) => ({ ...message, status: "error" }),
 				),
@@ -166,11 +166,7 @@ const reduceStreamEvent = (
 	const conversationId =
 		event.type === "message_created"
 			? event.message.conversationId
-			: state.activeConversationId;
-
-	if (!conversationId) {
-		return {};
-	}
+			: streamConversationId;
 
 	const messages = state.messagesByConversationId[conversationId] ?? [];
 
@@ -271,7 +267,7 @@ const startStream = async (
 		await streamChat(request, {
 			signal: abortController.signal,
 			onEvent: (event) => {
-				set((state) => reduceStreamEvent(state, event));
+				set((state) => reduceStreamEvent(state, event, request.conversationId));
 			},
 		});
 	} catch (error) {
