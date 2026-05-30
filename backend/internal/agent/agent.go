@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-investment-assistant/backend/internal/config"
@@ -31,9 +32,10 @@ type Agent interface {
 }
 
 type EinoAgent struct {
-	cfg      config.Config
-	registry tools.Registry
-	runtime  *EinoRuntime
+	cfg       config.Config
+	registry  tools.Registry
+	runtimeMu sync.Mutex
+	runtime   *EinoRuntime
 }
 
 func NewEinoAgent(cfg config.Config, registry tools.Registry) Agent {
@@ -50,20 +52,30 @@ func (a *EinoAgent) Stream(ctx context.Context, messages []Message) (<-chan Even
 			a.streamFallback(ctx, messages, events, errs)
 			return
 		}
-		runtime := a.runtime
-		if runtime == nil {
-			created, err := NewEinoRuntime(ctx, a.cfg, a.registry, DefaultChatGraphSpec())
-			if err != nil {
-				errs <- err
-				return
-			}
-			runtime = created
+		runtime, err := a.runtimeForStream(ctx)
+		if err != nil {
+			errs <- err
+			return
 		}
 		if err := runtime.Stream(ctx, messages, events); err != nil {
 			errs <- err
 		}
 	}()
 	return events, errs
+}
+
+func (a *EinoAgent) runtimeForStream(ctx context.Context) (*EinoRuntime, error) {
+	a.runtimeMu.Lock()
+	defer a.runtimeMu.Unlock()
+	if a.runtime != nil {
+		return a.runtime, nil
+	}
+	runtime, err := NewEinoRuntime(ctx, a.cfg, a.registry, DefaultChatGraphSpec())
+	if err != nil {
+		return nil, err
+	}
+	a.runtime = runtime
+	return runtime, nil
 }
 
 func (a *EinoAgent) streamFallback(ctx context.Context, messages []Message, events chan<- Event, errs chan<- error) {

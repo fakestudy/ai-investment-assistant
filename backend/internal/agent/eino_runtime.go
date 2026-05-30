@@ -54,7 +54,7 @@ func NewEinoRuntime(ctx context.Context, cfg config.Config, registry tools.Regis
 		}
 		toolMap[info.Name] = item
 	}
-	toolInfos, selectedTools, err := selectGraphTools(toolMap, spec.Tools)
+	toolInfos, selectedTools, err := selectGraphTools(ctx, toolMap, spec.Tools)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +93,9 @@ func (r *EinoRuntime) Stream(ctx context.Context, messages []Message, events cha
 		if assistantMessage == nil || len(assistantMessage.ToolCalls) == 0 {
 			return nil
 		}
+		if !graphSpecEnablesToolLoop(r.spec) {
+			return nil
+		}
 		if iteration >= maxEinoToolIterations {
 			return errors.New("eino tool iteration limit exceeded")
 		}
@@ -100,7 +103,7 @@ func (r *EinoRuntime) Stream(ctx context.Context, messages []Message, events cha
 		if err != nil {
 			return err
 		}
-		history = append(history, assistantMessage)
+		history = append(history, assistantToolCallFollowUpMessage(assistantMessage))
 		history = append(history, toolMessages...)
 	}
 	return nil
@@ -292,7 +295,7 @@ func hasNode(nodes []NodeSpec, name string, kind string) bool {
 	return false
 }
 
-func selectGraphTools(available map[string]einotool.InvokableTool, specs []ToolSpec) ([]*schema.ToolInfo, map[string]einotool.InvokableTool, error) {
+func selectGraphTools(ctx context.Context, available map[string]einotool.InvokableTool, specs []ToolSpec) ([]*schema.ToolInfo, map[string]einotool.InvokableTool, error) {
 	toolInfos := make([]*schema.ToolInfo, 0, len(specs))
 	selected := make(map[string]einotool.InvokableTool, len(specs))
 	for _, spec := range specs {
@@ -304,7 +307,7 @@ func selectGraphTools(available map[string]einotool.InvokableTool, specs []ToolS
 		if !ok {
 			return nil, nil, fmt.Errorf("graph tool %q is not registered", name)
 		}
-		info, err := tool.Info(context.Background())
+		info, err := tool.Info(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -312,6 +315,34 @@ func selectGraphTools(available map[string]einotool.InvokableTool, specs []ToolS
 		selected[name] = tool
 	}
 	return toolInfos, selected, nil
+}
+
+func graphSpecEnablesToolLoop(spec GraphSpec) bool {
+	for _, edge := range spec.Edges {
+		if edge.From == "chat_model" && edge.To == "tools" && edge.Condition == "model_requests_tool" {
+			return true
+		}
+	}
+	return false
+}
+
+func assistantToolCallFollowUpMessage(message *schema.Message) *schema.Message {
+	followUp := *message
+	followUp.ReasoningContent = ""
+	if followUp.ToolCalls != nil {
+		followUp.ToolCalls = append([]schema.ToolCall(nil), followUp.ToolCalls...)
+	}
+	if followUp.Extra != nil {
+		extra := make(map[string]any, len(followUp.Extra))
+		for key, value := range followUp.Extra {
+			if key == "reasoning-content" {
+				continue
+			}
+			extra[key] = value
+		}
+		followUp.Extra = extra
+	}
+	return &followUp
 }
 
 func toolResultMessage(toolCallID string, toolName string, content string) *schema.Message {

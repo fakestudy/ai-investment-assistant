@@ -38,6 +38,33 @@ func TestNewEinoRuntimeWithoutAPIKeyUsesFallback(t *testing.T) {
 	}
 }
 
+func TestEinoAgentCachesCreatedRuntime(t *testing.T) {
+	agentUnderTest := NewEinoAgent(config.Config{
+		DeepSeekAPIKey:    "test-key",
+		DeepSeekBaseURL:   "https://api.deepseek.com",
+		DeepSeekModel:     "deepseek-v4-pro",
+		HTTPClientTimeout: time.Second,
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second})).(*EinoAgent)
+
+	first, err := agentUnderTest.runtimeForStream(context.Background())
+	if err != nil {
+		t.Fatalf("first runtimeForStream() error = %v", err)
+	}
+	second, err := agentUnderTest.runtimeForStream(context.Background())
+	if err != nil {
+		t.Fatalf("second runtimeForStream() error = %v", err)
+	}
+	if first == nil {
+		t.Fatal("first runtime is nil")
+	}
+	if first != second {
+		t.Fatalf("runtimeForStream() returned different runtimes: first=%p second=%p", first, second)
+	}
+	if agentUnderTest.runtime != first {
+		t.Fatalf("cached runtime = %p, want %p", agentUnderTest.runtime, first)
+	}
+}
+
 func TestBuildEinoRuntimeRequiresDeepSeekConfig(t *testing.T) {
 	_, err := NewEinoRuntime(context.Background(), config.Config{
 		DeepSeekAPIKey:    "test-key",
@@ -99,6 +126,20 @@ func TestNewEinoRuntimeValidatesGraphSpecAndSelectsTools(t *testing.T) {
 		}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}), spec)
 		if err == nil || !strings.Contains(err.Error(), "missing_tool") {
 			t.Fatalf("NewEinoRuntime() error = %v, want missing_tool validation error", err)
+		}
+	})
+
+	t.Run("uses caller context when reading tool info", func(t *testing.T) {
+		type contextKey string
+		ctx := context.WithValue(context.Background(), contextKey("request_id"), "req_123")
+		tool := &contextCheckingTool{name: "ctx_tool", key: contextKey("request_id"), want: "req_123"}
+
+		_, selected, err := selectGraphTools(ctx, map[string]einotool.InvokableTool{"ctx_tool": tool}, []ToolSpec{{Name: "ctx_tool"}})
+		if err != nil {
+			t.Fatalf("selectGraphTools() error = %v", err)
+		}
+		if selected["ctx_tool"] != tool {
+			t.Fatalf("selected tool = %v, want original ctx_tool", selected["ctx_tool"])
 		}
 	})
 }
@@ -261,6 +302,100 @@ func TestEinoRuntimeLoopsToolResultsBackToModelForFinalAnswer(t *testing.T) {
 	}
 	if !strings.Contains(secondInput[2].Content, "web_search is not configured") {
 		t.Fatalf("tool result content = %q, want serialized tool output", secondInput[2].Content)
+	}
+}
+
+func TestEinoRuntimeStripsReasoningContentFromToolCallFollowUp(t *testing.T) {
+	tool := &countingInvokableTool{name: "count_tool", result: "counted"}
+	model := &fakeStreamChatModel{streams: [][]*schema.Message{
+		{
+			{
+				ReasoningContent: "private chain of thought",
+				ToolCalls: []schema.ToolCall{{
+					ID:   "call_count",
+					Type: "function",
+					Function: schema.FunctionCall{
+						Name:      "count_tool",
+						Arguments: `{"input":"value"}`,
+					},
+				}},
+			},
+		},
+		{
+			{Content: "done"},
+		},
+	}}
+	runtime := &EinoRuntime{
+		spec:  DefaultChatGraphSpec(),
+		model: model,
+		tools: map[string]einotool.InvokableTool{"count_tool": tool},
+	}
+
+	events := make(chan Event)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		if err := runtime.Stream(context.Background(), []Message{{Role: "user", Content: "hello"}}, events); err != nil {
+			errs <- err
+		}
+	}()
+
+	_ = collectRuntimeEvents(t, events, errs)
+	if len(model.inputs) != 2 {
+		t.Fatalf("model Stream calls = %d, want 2", len(model.inputs))
+	}
+	assistantFollowUp := model.inputs[1][1]
+	if assistantFollowUp.Role != schema.Assistant || len(assistantFollowUp.ToolCalls) != 1 {
+		t.Fatalf("assistant follow-up = %+v, want assistant tool-call message", assistantFollowUp)
+	}
+	if assistantFollowUp.ReasoningContent != "" {
+		t.Fatalf("assistant follow-up ReasoningContent = %q, want empty", assistantFollowUp.ReasoningContent)
+	}
+}
+
+func TestEinoRuntimeUsesGraphSpecEdgeToDisableToolLoop(t *testing.T) {
+	tool := &countingInvokableTool{name: "count_tool", result: "counted"}
+	spec := DefaultChatGraphSpec()
+	spec.Edges = nil
+	spec.Tools = nil
+	model := &fakeStreamChatModel{streams: [][]*schema.Message{
+		{
+			{ToolCalls: []schema.ToolCall{{
+				ID:   "call_count",
+				Type: "function",
+				Function: schema.FunctionCall{
+					Name:      "count_tool",
+					Arguments: `{"input":"value"}`,
+				},
+			}}},
+		},
+	}}
+	runtime := &EinoRuntime{
+		spec:  spec,
+		model: model,
+		tools: map[string]einotool.InvokableTool{"count_tool": tool},
+	}
+
+	events := make(chan Event)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		if err := runtime.Stream(context.Background(), []Message{{Role: "user", Content: "hello"}}, events); err != nil {
+			errs <- err
+		}
+	}()
+
+	collected := collectRuntimeEvents(t, events, errs)
+	if len(collected) != 0 {
+		t.Fatalf("events = %+v, want no tool events when graph has no chat_model -> tools edge", collected)
+	}
+	if tool.calls != 0 {
+		t.Fatalf("tool calls = %d, want 0 when graph edge disables tool loop", tool.calls)
+	}
+	if len(model.inputs) != 1 {
+		t.Fatalf("model Stream calls = %d, want 1 without tool loop", len(model.inputs))
 	}
 }
 
@@ -559,6 +694,23 @@ func (t *countingInvokableTool) Info(ctx context.Context) (*schema.ToolInfo, err
 func (t *countingInvokableTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...einotool.Option) (string, error) {
 	t.calls++
 	return t.result, nil
+}
+
+type contextCheckingTool struct {
+	name string
+	key  any
+	want any
+}
+
+func (t *contextCheckingTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+	if got := ctx.Value(t.key); got != t.want {
+		return nil, fmt.Errorf("context value = %v, want %v", got, t.want)
+	}
+	return &schema.ToolInfo{Name: t.name, Desc: "checks context"}, nil
+}
+
+func (t *contextCheckingTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...einotool.Option) (string, error) {
+	return "ok", nil
 }
 
 func cloneSchemaMessages(input []*schema.Message) []*schema.Message {
