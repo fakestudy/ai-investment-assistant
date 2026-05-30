@@ -23,17 +23,11 @@ import {
 	ReasoningContent,
 	ReasoningTrigger,
 } from "@/components/ai-elements/reasoning";
-import {
-	Tool,
-	ToolContent,
-	ToolHeader,
-	ToolInput,
-	ToolOutput,
-} from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { ChatMessage, ToolInvocation } from "../types";
+import type { ChatMessage } from "../types";
+import { ToolInvocationCard } from "./tool-invocation-card";
 
 type ChatMessageItemProps = {
 	message: ChatMessage;
@@ -43,39 +37,6 @@ type ChatMessageItemProps = {
 };
 
 type Feedback = "liked" | "disliked";
-
-const toToolState = (status: ToolInvocation["status"]) => {
-	if (status === "running") {
-		return "input-available" as const;
-	}
-
-	if (status === "error") {
-		return "output-error" as const;
-	}
-
-	return "output-available" as const;
-};
-
-function ToolInvocationDetails({ invocation }: { invocation: ToolInvocation }) {
-	return (
-		<Tool className="mb-0 border-zinc-200 bg-zinc-50/70" defaultOpen={false}>
-			<ToolHeader
-				state={toToolState(invocation.status)}
-				toolName={invocation.toolName}
-				type="dynamic-tool"
-			/>
-			<ToolContent>
-				<ToolInput input={invocation.args} />
-				{typeof invocation.latencyMs === "number" && (
-					<p className="text-muted-foreground text-xs">
-						Latency: {invocation.latencyMs}ms
-					</p>
-				)}
-				<ToolOutput errorText={invocation.error} output={invocation.result} />
-			</ToolContent>
-		</Tool>
-	);
-}
 
 export function ChatMessageItem({
 	message,
@@ -180,10 +141,7 @@ export function ChatMessageItem({
 							</p>
 						)}
 						{message.toolInvocations?.map((invocation) => (
-							<ToolInvocationDetails
-								invocation={invocation}
-								key={invocation.id}
-							/>
+							<ToolInvocationCard invocation={invocation} key={invocation.id} />
 						))}
 					</>
 				)}
