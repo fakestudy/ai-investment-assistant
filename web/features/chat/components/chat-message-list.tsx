@@ -52,7 +52,7 @@ export function ChatMessageList() {
 
 	return (
 		<Conversation className="bg-white">
-			<ConversationContent className="mx-auto w-full max-w-3xl gap-7 px-6 py-8">
+			<ConversationContent className="mx-auto w-full max-w-6xl gap-7 px-6 py-8">
 				{messages.map((message, index) => {
 					const isLastAssistantMessage =
 						message.role === "assistant" && index === messages.length - 1;
