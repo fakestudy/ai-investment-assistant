@@ -17,8 +17,8 @@ func TestRegistryBuildsEinoTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EinoTools() error = %v", err)
 	}
-	if len(einoTools) != 2 {
-		t.Fatalf("EinoTools len = %d, want 2", len(einoTools))
+	if len(einoTools) != 3 {
+		t.Fatalf("EinoTools len = %d, want 3", len(einoTools))
 	}
 
 	names := map[string]bool{}
@@ -32,8 +32,8 @@ func TestRegistryBuildsEinoTools(t *testing.T) {
 		}
 		names[info.Name] = true
 	}
-	if !names["web_search"] || !names["fetch_url"] {
-		t.Fatalf("tool names = %+v, want web_search and fetch_url", names)
+	if !names["web_search"] || !names["fetch_url"] || !names["current_time"] {
+		t.Fatalf("tool names = %+v, want web_search, fetch_url, and current_time", names)
 	}
 }
 
@@ -68,6 +68,23 @@ func TestEinoWebSearchToolReturnsRegistryErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "query is required") {
 		t.Fatalf("error = %q, want registry validation message", err.Error())
+	}
+}
+
+func TestEinoCurrentTimeToolUsesExistingRegistryBehavior(t *testing.T) {
+	registry := tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second})
+	einoTools, err := registry.EinoTools(context.Background())
+	if err != nil {
+		t.Fatalf("EinoTools() error = %v", err)
+	}
+	currentTime := requireEinoTool(t, einoTools, "current_time")
+
+	output, err := currentTime.InvokableRun(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("InvokableRun(current_time) error = %v", err)
+	}
+	if !strings.Contains(output, `"timezone":"Asia/Shanghai"`) {
+		t.Fatalf("output = %s, want Asia/Shanghai timezone", output)
 	}
 }
 

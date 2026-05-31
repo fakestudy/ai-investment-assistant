@@ -43,6 +43,7 @@ func DefaultChatGraphSpec() GraphSpec {
 		Tools: []ToolSpec{
 			{Name: "web_search"},
 			{Name: "fetch_url"},
+			{Name: "current_time"},
 		},
 	}
 }

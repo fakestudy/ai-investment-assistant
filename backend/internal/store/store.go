@@ -23,5 +23,6 @@ func AutoMigrate(ctx context.Context, db *gorm.DB) error {
 		&Conversation{},
 		&Message{},
 		&ToolInvocation{},
+		&MessagePart{},
 	)
 }

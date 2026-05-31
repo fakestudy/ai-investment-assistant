@@ -23,6 +23,20 @@ export type ToolInvocation = {
 	createdAt?: string;
 };
 
+export type ChatTimelinePart =
+	| {
+			id: string;
+			type: "reasoning";
+			orderIndex?: number;
+			text: string;
+	  }
+	| {
+			id: string;
+			type: "tool";
+			orderIndex?: number;
+			invocation: ToolInvocation;
+	  };
+
 export type ChatMessage = {
 	id: string;
 	conversationId: string;
@@ -30,6 +44,7 @@ export type ChatMessage = {
 	content: string;
 	reasoning?: string;
 	toolInvocations?: ToolInvocation[];
+	timelineParts?: ChatTimelinePart[];
 	status?: MessageStatus;
 	createdAt: string;
 };

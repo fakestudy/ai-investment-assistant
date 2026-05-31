@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	appendReasoningTimelinePart,
 	getLatestStreamingAssistantMessageId,
 	getResumableStreamingMessageId,
 	getVisibleMessageWindow,
 	isActiveConversationStreaming,
 	resetStreamCreatedMessage,
 	resolveLoadedConversationMessages,
+	upsertToolTimelinePart,
 } from "./chat-ui-state";
 
 test("isActiveConversationStreaming only locks the active conversation", () => {
@@ -154,4 +156,83 @@ test("getResumableStreamingMessageId skips the currently connected stream", () =
 		}),
 		undefined,
 	);
+});
+
+test("appendReasoningTimelinePart preserves reasoning event order", () => {
+	const parts = appendReasoningTimelinePart(
+		[
+			{
+				id: "tool-1",
+				type: "tool" as const,
+				invocation: {
+					id: "tool-1",
+					messageId: "assistant-1",
+					toolName: "web_search",
+					args: { query: "market" },
+					status: "running" as const,
+				},
+			},
+		],
+		{ id: "reasoning-2", text: "Compare results." },
+	);
+
+	assert.deepEqual(
+		parts.map((part) => part.id),
+		["tool-1", "reasoning-2"],
+	);
+	assert.deepEqual(parts[1], {
+		id: "reasoning-2",
+		type: "reasoning",
+		text: "Compare results.",
+	});
+});
+
+test("appendReasoningTimelinePart merges adjacent reasoning chunks", () => {
+	const parts = appendReasoningTimelinePart(
+		[{ id: "reasoning-1", type: "reasoning" as const, text: "Search " }],
+		{ id: "reasoning-2", text: "first." },
+	);
+
+	assert.deepEqual(parts, [
+		{ id: "reasoning-1", type: "reasoning", text: "Search first." },
+	]);
+});
+
+test("upsertToolTimelinePart updates tool result without moving the original event", () => {
+	const parts = upsertToolTimelinePart(
+		[
+			{ id: "reasoning-1", type: "reasoning" as const, text: "Search first." },
+			{
+				id: "tool-1",
+				type: "tool" as const,
+				invocation: {
+					id: "tool-1",
+					messageId: "assistant-1",
+					toolName: "web_search",
+					args: { query: "market" },
+					status: "running" as const,
+				},
+			},
+			{ id: "reasoning-2", type: "reasoning" as const, text: "Then answer." },
+		],
+		{
+			id: "tool-1",
+			messageId: "assistant-1",
+			toolName: "web_search",
+			args: { query: "market" },
+			result: { summary: "2 results" },
+			latencyMs: 120,
+			status: "completed" as const,
+		},
+	);
+
+	assert.deepEqual(
+		parts.map((part) => part.id),
+		["reasoning-1", "tool-1", "reasoning-2"],
+	);
+	assert.equal(parts[1].type, "tool");
+	if (parts[1].type === "tool") {
+		assert.deepEqual(parts[1].invocation.result, { summary: "2 results" });
+		assert.equal(parts[1].invocation.status, "completed");
+	}
 });

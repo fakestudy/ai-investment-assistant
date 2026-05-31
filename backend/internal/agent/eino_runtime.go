@@ -28,7 +28,7 @@ type EinoRuntime struct {
 	tools map[string]einotool.InvokableTool
 }
 
-const maxEinoToolIterations = 3
+const maxEinoToolIterations = 30
 
 func NewEinoRuntime(ctx context.Context, cfg config.Config, registry tools.Registry, spec GraphSpec) (*EinoRuntime, error) {
 	if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
@@ -64,7 +64,7 @@ func NewEinoRuntime(ctx context.Context, cfg config.Config, registry tools.Regis
 		BaseURL:         cfg.DeepSeekBaseURL,
 		Model:           cfg.DeepSeekModel,
 		Timeout:         timeout,
-		ReasoningEffort: openai.ReasoningEffortLevelHigh,
+		ReasoningEffort: "max",
 		ExtraFields: map[string]any{
 			"thinking": map[string]any{"type": "enabled"},
 		},
@@ -76,6 +76,7 @@ func NewEinoRuntime(ctx context.Context, cfg config.Config, registry tools.Regis
 	if err != nil {
 		return nil, err
 	}
+
 	return &EinoRuntime{
 		spec:  spec,
 		model: boundModel,

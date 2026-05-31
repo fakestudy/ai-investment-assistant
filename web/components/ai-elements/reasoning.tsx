@@ -152,6 +152,7 @@ export type ReasoningTriggerProps = ComponentProps<
 	typeof CollapsibleTrigger
 > & {
 	getThinkingMessage?: (isStreaming: boolean, duration?: number) => ReactNode;
+	icon?: ReactNode;
 };
 
 const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
@@ -169,6 +170,7 @@ export const ReasoningTrigger = memo(
 		className,
 		children,
 		getThinkingMessage = defaultGetThinkingMessage,
+		icon,
 		...props
 	}: ReasoningTriggerProps) => {
 		const { isStreaming, isOpen, duration } = useReasoning();
@@ -183,7 +185,7 @@ export const ReasoningTrigger = memo(
 			>
 				{children ?? (
 					<>
-						<BrainIcon className="size-4" />
+						{icon ?? <BrainIcon className="size-4" />}
 						{getThinkingMessage(isStreaming, duration)}
 						<ChevronDownIcon
 							className={cn(
@@ -201,7 +203,7 @@ export const ReasoningTrigger = memo(
 export type ReasoningContentProps = ComponentProps<
 	typeof CollapsibleContent
 > & {
-	children: string;
+	children: ReactNode;
 };
 
 const streamdownPlugins = { cjk, code, math, mermaid };
@@ -216,7 +218,11 @@ export const ReasoningContent = memo(
 			)}
 			{...props}
 		>
-			<Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+			{typeof children === "string" ? (
+				<Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+			) : (
+				children
+			)}
 		</CollapsibleContent>
 	),
 );

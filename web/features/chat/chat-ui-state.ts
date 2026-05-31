@@ -1,6 +1,8 @@
 export const INITIAL_VISIBLE_MESSAGE_COUNT = 80;
 export const VISIBLE_MESSAGE_BATCH_SIZE = 80;
 
+import type { ChatTimelinePart, ToolInvocation } from "./types";
+
 type ActiveStreamingState = {
 	activeConversationId?: string;
 	isStreaming: boolean;
@@ -23,6 +25,7 @@ type StreamCreatedMessage = {
 	content: string;
 	reasoning?: string;
 	toolInvocations?: unknown[];
+	timelineParts?: unknown[];
 };
 
 type LoadedConversationMessages<T> = {
@@ -78,6 +81,58 @@ export function resetStreamCreatedMessage<T extends StreamCreatedMessage>(
 	replayedMessage: T,
 ): T {
 	return replayedMessage;
+}
+
+export function appendReasoningTimelinePart(
+	parts: readonly ChatTimelinePart[] | undefined,
+	input: { id: string; text: string },
+): ChatTimelinePart[] {
+	const currentParts = parts ?? [];
+	const lastPart = currentParts.at(-1);
+
+	if (lastPart?.type === "reasoning") {
+		return currentParts.map((part, index) =>
+			index === currentParts.length - 1 && part.type === "reasoning"
+				? { ...part, text: `${part.text}${input.text}` }
+				: part,
+		);
+	}
+
+	return [
+		...currentParts,
+		{
+			id: input.id,
+			type: "reasoning",
+			text: input.text,
+		},
+	];
+}
+
+export function upsertToolTimelinePart(
+	parts: readonly ChatTimelinePart[] | undefined,
+	invocation: ToolInvocation,
+): ChatTimelinePart[] {
+	const currentParts = parts ?? [];
+	const existingIndex = currentParts.findIndex(
+		(part) => part.type === "tool" && part.invocation.id === invocation.id,
+	);
+
+	if (existingIndex === -1) {
+		return [
+			...currentParts,
+			{
+				id: invocation.id,
+				type: "tool",
+				invocation,
+			},
+		];
+	}
+
+	return currentParts.map((part, index) =>
+		index === existingIndex && part.type === "tool"
+			? { ...part, invocation: { ...part.invocation, ...invocation } }
+			: part,
+	);
 }
 
 export function resolveLoadedConversationMessages<T>({

@@ -211,6 +211,7 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 	var content strings.Builder
 	var reasoning strings.Builder
 	toolInvocations := map[string]ToolInvocation{}
+	timelineState := messageTimelineState{}
 	for agentEvents != nil || agentErrors != nil {
 		select {
 		case <-ctx.Done():
@@ -236,7 +237,7 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 				agentEvents = nil
 				continue
 			}
-			if !s.handleAgentEvent(ctx, stream, assistant.ID, event, &content, &reasoning, toolInvocations) {
+			if !s.handleAgentEvent(ctx, stream, assistant.ID, event, &content, &reasoning, toolInvocations, &timelineState) {
 				s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
 				stream.publish(StreamEvent{Type: "done", MessageID: assistant.ID})
 				return
@@ -259,7 +260,14 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 	stream.publish(StreamEvent{Type: "done", MessageID: assistant.ID})
 }
 
-func (s *Service) handleAgentEvent(ctx context.Context, stream *activeStream, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder, toolInvocations map[string]ToolInvocation) bool {
+type messageTimelineState struct {
+	nextOrderIndex int
+	lastPartID     string
+	lastPartType   string
+	lastPartText   string
+}
+
+func (s *Service) handleAgentEvent(ctx context.Context, stream *activeStream, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder, toolInvocations map[string]ToolInvocation, timelineState *messageTimelineState) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -268,6 +276,7 @@ func (s *Service) handleAgentEvent(ctx context.Context, stream *activeStream, as
 	case "reasoning":
 		stream.publish(StreamEvent{Type: "reasoning", MessageID: assistantID, Text: event.Text})
 		reasoning.WriteString(event.Text)
+		s.appendReasoningPart(ctx, assistantID, event.Text, timelineState)
 		return true
 	case "tool_call":
 		invocation := invocationFromAgentEvent(assistantID, event, "running")
@@ -283,6 +292,7 @@ func (s *Service) handleAgentEvent(ctx context.Context, stream *activeStream, as
 			invocation = persisted
 		}
 		toolInvocations[toolInvocationKey(event)] = invocation
+		s.appendToolPart(ctx, assistantID, invocation.ID, timelineState)
 		stream.publish(StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: &invocation})
 		return true
 	case "tool_result":
@@ -321,6 +331,53 @@ func (s *Service) handleAgentEvent(ctx context.Context, stream *activeStream, as
 		content.WriteString(event.Text)
 		return true
 	}
+}
+
+func (s *Service) appendReasoningPart(ctx context.Context, assistantID string, text string, timelineState *messageTimelineState) {
+	if timelineState == nil || text == "" {
+		return
+	}
+	if timelineState.lastPartType == "reasoning" && timelineState.lastPartID != "" {
+		timelineState.lastPartText += text
+		if updated, err := s.conversations.UpdateMessagePart(context.WithoutCancel(ctx), timelineState.lastPartID, conversation.UpdateMessagePartInput{
+			Text: timelineState.lastPartText,
+		}); err == nil {
+			timelineState.lastPartText = updated.Text
+		}
+		return
+	}
+	part, err := s.conversations.CreateMessagePart(context.WithoutCancel(ctx), conversation.CreateMessagePartInput{
+		MessageID:  assistantID,
+		Type:       "reasoning",
+		OrderIndex: timelineState.nextOrderIndex,
+		Text:       text,
+	})
+	if err != nil {
+		return
+	}
+	timelineState.nextOrderIndex++
+	timelineState.lastPartID = part.ID
+	timelineState.lastPartType = part.Type
+	timelineState.lastPartText = part.Text
+}
+
+func (s *Service) appendToolPart(ctx context.Context, assistantID string, toolInvocationID string, timelineState *messageTimelineState) {
+	if timelineState == nil || toolInvocationID == "" {
+		return
+	}
+	part, err := s.conversations.CreateMessagePart(context.WithoutCancel(ctx), conversation.CreateMessagePartInput{
+		MessageID:        assistantID,
+		Type:             "tool",
+		OrderIndex:       timelineState.nextOrderIndex,
+		ToolInvocationID: toolInvocationID,
+	})
+	if err != nil {
+		return
+	}
+	timelineState.nextOrderIndex++
+	timelineState.lastPartID = part.ID
+	timelineState.lastPartType = part.Type
+	timelineState.lastPartText = part.Text
 }
 
 func toolInvocationKey(event AgentEvent) string {

@@ -48,6 +48,8 @@ cp .env.example .env
 - `DEEPSEEK_BASE_URL`：DeepSeek OpenAI-compatible base URL，默认 `https://api.deepseek.com`
 - `DEEPSEEK_MODEL`：DeepSeek 模型名
 - `DEEPSEEK_TIMEOUT_SECONDS`：DeepSeek HTTP 调用超时
+- `TAVILY_API_KEY`：Tavily API key，用于 Agent 联网搜索；可在 [Tavily Platform](https://app.tavily.com/) 登录后从 dashboard 复制
+- `TAVILY_BASE_URL`：Tavily API base URL，默认 `https://api.tavily.com`
 - `DATABASE_URL`：默认指向 docker-compose 内的 postgres
 - `JWT_SECRET`、`INITIAL_USER_*`：本地登录鉴权使用
 

@@ -37,6 +37,7 @@ type ChatMessage struct {
 	Status          string           `json:"status"`
 	CreatedAt       time.Time        `json:"createdAt"`
 	ToolInvocations []ToolInvocation `json:"toolInvocations,omitempty"`
+	TimelineParts   []MessagePart    `json:"timelineParts,omitempty"`
 }
 
 type ToolInvocation struct {
@@ -49,6 +50,16 @@ type ToolInvocation struct {
 	LatencyMS int64           `json:"latencyMs"`
 	Status    string          `json:"status"`
 	CreatedAt time.Time       `json:"createdAt"`
+}
+
+type MessagePart struct {
+	ID         string          `json:"id"`
+	MessageID  string          `json:"messageId"`
+	Type       string          `json:"type"`
+	OrderIndex int             `json:"orderIndex"`
+	Text       string          `json:"text,omitempty"`
+	Invocation *ToolInvocation `json:"invocation,omitempty"`
+	CreatedAt  time.Time       `json:"createdAt"`
 }
 
 type CreateMessageInput struct {
@@ -82,6 +93,18 @@ type UpdateToolInvocationInput struct {
 	Error     string
 	LatencyMS int64
 	Status    string
+}
+
+type CreateMessagePartInput struct {
+	MessageID        string
+	Type             string
+	OrderIndex       int
+	Text             string
+	ToolInvocationID string
+}
+
+type UpdateMessagePartInput struct {
+	Text string
 }
 
 func NewService(db *gorm.DB) *Service {
@@ -130,6 +153,9 @@ func (s *Service) RenameConversation(ctx context.Context, id string, title strin
 func (s *Service) DeleteConversation(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		messageIDs := tx.Model(&store.Message{}).Select("id").Where("conversation_id = ?", id)
+		if err := tx.Where("message_id IN (?)", messageIDs).Delete(&store.MessagePart{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("message_id IN (?)", messageIDs).Delete(&store.ToolInvocation{}).Error; err != nil {
 			return err
 		}
@@ -153,6 +179,10 @@ func (s *Service) ListMessages(ctx context.Context, conversationID string) ([]Ch
 		Preload("ToolInvocations", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at asc, id asc")
 		}).
+		Preload("Parts", func(db *gorm.DB) *gorm.DB {
+			return db.Order("order_index asc, id asc")
+		}).
+		Preload("Parts.ToolInvocation").
 		Where("conversation_id = ?", conversationID).
 		Order("created_at asc, id asc").
 		Find(&rows).Error; err != nil {
@@ -260,6 +290,39 @@ func (s *Service) UpdateToolInvocation(ctx context.Context, invocationID string,
 	return toolInvocationDTO(row), nil
 }
 
+func (s *Service) CreateMessagePart(ctx context.Context, input CreateMessagePartInput) (MessagePart, error) {
+	row := store.MessagePart{
+		ID:         uuid.NewString(),
+		MessageID:  input.MessageID,
+		Type:       input.Type,
+		OrderIndex: input.OrderIndex,
+		Text:       input.Text,
+	}
+	if strings.TrimSpace(input.ToolInvocationID) != "" {
+		toolInvocationID := input.ToolInvocationID
+		row.ToolInvocationID = &toolInvocationID
+	}
+	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return MessagePart{}, err
+	}
+	return messagePartDTO(row), nil
+}
+
+func (s *Service) UpdateMessagePart(ctx context.Context, partID string, input UpdateMessagePartInput) (MessagePart, error) {
+	var row store.MessagePart
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&row, "id = ?", partID).Error; err != nil {
+			return err
+		}
+		row.Text = input.Text
+		return tx.Save(&row).Error
+	})
+	if err != nil {
+		return MessagePart{}, err
+	}
+	return messagePartDTO(row), nil
+}
+
 func (s *Service) EditMessage(ctx context.Context, messageID string, content string) (ChatMessage, error) {
 	var row store.Message
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -273,6 +336,9 @@ func (s *Service) EditMessage(ctx context.Context, messageID string, content str
 		followingMessages := tx.Model(&store.Message{}).
 			Select("id").
 			Where("conversation_id = ? AND (created_at > ? OR (created_at = ? AND id > ?))", row.ConversationID, row.CreatedAt, row.CreatedAt, row.ID)
+		if err := tx.Where("message_id IN (?)", followingMessages).Delete(&store.MessagePart{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("message_id IN (?)", followingMessages).Delete(&store.ToolInvocation{}).Error; err != nil {
 			return err
 		}
@@ -343,6 +409,10 @@ func messageDTO(row store.Message) ChatMessage {
 	for _, invocation := range row.ToolInvocations {
 		toolInvocations = append(toolInvocations, toolInvocationDTO(invocation))
 	}
+	timelineParts := make([]MessagePart, 0, len(row.Parts))
+	for _, part := range row.Parts {
+		timelineParts = append(timelineParts, messagePartDTO(part))
+	}
 
 	return ChatMessage{
 		ID:              row.ID,
@@ -353,6 +423,25 @@ func messageDTO(row store.Message) ChatMessage {
 		Status:          normalizeMessageStatus(row.Role, row.Status),
 		CreatedAt:       row.CreatedAt,
 		ToolInvocations: toolInvocations,
+		TimelineParts:   timelineParts,
+	}
+}
+
+func messagePartDTO(row store.MessagePart) MessagePart {
+	var invocation *ToolInvocation
+	if row.ToolInvocation != nil {
+		dto := toolInvocationDTO(*row.ToolInvocation)
+		invocation = &dto
+	}
+
+	return MessagePart{
+		ID:         row.ID,
+		MessageID:  row.MessageID,
+		Type:       row.Type,
+		OrderIndex: row.OrderIndex,
+		Text:       row.Text,
+		Invocation: invocation,
+		CreatedAt:  row.CreatedAt,
 	}
 }
 

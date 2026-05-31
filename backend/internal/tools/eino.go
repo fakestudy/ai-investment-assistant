@@ -17,6 +17,8 @@ type fetchURLInput struct {
 	URL string `json:"url" jsonschema:"description=HTTP or HTTPS URL to fetch,required"`
 }
 
+type currentTimeInput struct{}
+
 func (r Registry) EinoTools(ctx context.Context) ([]EinoInvokableTool, error) {
 	webSearch, err := toolutils.InferTool(
 		"web_search",
@@ -40,5 +42,16 @@ func (r Registry) EinoTools(ctx context.Context) ([]EinoInvokableTool, error) {
 		return nil, err
 	}
 
-	return []EinoInvokableTool{webSearch, fetchURL}, nil
+	currentTime, err := toolutils.InferTool(
+		"current_time",
+		"Get the current date and time in Asia/Shanghai timezone.",
+		func(ctx context.Context, input currentTimeInput) (map[string]any, error) {
+			return r.Execute(ctx, "current_time", map[string]any{})
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return []EinoInvokableTool{webSearch, fetchURL, currentTime}, nil
 }

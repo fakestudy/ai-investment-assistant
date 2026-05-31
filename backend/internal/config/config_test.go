@@ -14,6 +14,8 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("DEEPSEEK_TIMEOUT_SECONDS", "")
 	t.Setenv("SEARCH_API_KEY", "")
 	t.Setenv("SEARCH_BASE_URL", "")
+	t.Setenv("TAVILY_API_KEY", "")
+	t.Setenv("TAVILY_BASE_URL", "")
 	t.Setenv("FETCH_ALLOW_PRIVATE", "")
 
 	cfg := Load()
@@ -30,6 +32,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.DeepSeekModel != "deepseek-v4-pro" {
 		t.Fatalf("DeepSeekModel = %q", cfg.DeepSeekModel)
 	}
+	if cfg.TavilyBaseURL != "https://api.tavily.com" {
+		t.Fatalf("TavilyBaseURL = %q", cfg.TavilyBaseURL)
+	}
 	if cfg.HTTPClientTimeout != 60*time.Second {
 		t.Fatalf("HTTPClientTimeout = %s, want %s", cfg.HTTPClientTimeout, 60*time.Second)
 	}
@@ -44,6 +49,8 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("DEEPSEEK_TIMEOUT_SECONDS", "7")
 	t.Setenv("SEARCH_API_KEY", "search-key")
 	t.Setenv("SEARCH_BASE_URL", "https://search.example.com")
+	t.Setenv("TAVILY_API_KEY", "tavily-key")
+	t.Setenv("TAVILY_BASE_URL", "https://tavily.example.com")
 	t.Setenv("FETCH_ALLOW_PRIVATE", "true")
 
 	cfg := Load()
@@ -68,6 +75,12 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.SearchBaseURL != "https://search.example.com" {
 		t.Fatalf("SearchBaseURL = %q", cfg.SearchBaseURL)
+	}
+	if cfg.TavilyAPIKey != "tavily-key" {
+		t.Fatalf("TavilyAPIKey = %q", cfg.TavilyAPIKey)
+	}
+	if cfg.TavilyBaseURL != "https://tavily.example.com" {
+		t.Fatalf("TavilyBaseURL = %q", cfg.TavilyBaseURL)
 	}
 	if !cfg.FetchAllowPrivate {
 		t.Fatal("FetchAllowPrivate = false, want true")
