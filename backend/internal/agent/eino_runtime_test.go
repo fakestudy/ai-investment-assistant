@@ -16,25 +16,13 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestNewEinoRuntimeWithoutAPIKeyUsesFallback(t *testing.T) {
-	agentUnderTest := NewEinoAgent(config.Config{
+func TestNewEinoRuntimeWithoutAPIKeyReturnsError(t *testing.T) {
+	_, err := NewEinoRuntime(context.Background(), config.Config{
 		HTTPAddr:          ":8081",
 		HTTPClientTimeout: time.Second,
-	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}))
-
-	events, errs := agentUnderTest.Stream(context.Background(), []Message{
-		{Role: "user", Content: "Explain AI moats"},
-	})
-	collected := collectRuntimeEvents(t, events, errs)
-
-	if len(collected) == 0 {
-		t.Fatal("events len = 0, want fallback delta")
-	}
-	if collected[0].Kind != "delta" {
-		t.Fatalf("first event kind = %q, want delta", collected[0].Kind)
-	}
-	if !strings.Contains(collected[0].Text, "Explain AI moats") {
-		t.Fatalf("fallback text = %q, want prompt echo", collected[0].Text)
+	}, tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}), DefaultChatGraphSpec())
+	if err == nil || !strings.Contains(err.Error(), "DEEPSEEK_API_KEY is required") {
+		t.Fatalf("NewEinoRuntime() error = %v, want missing DEEPSEEK_API_KEY error", err)
 	}
 }
 

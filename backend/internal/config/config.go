@@ -14,6 +14,8 @@ type Config struct {
 	DeepSeekModel     string
 	SearchAPIKey      string
 	SearchBaseURL     string
+	TavilyAPIKey      string
+	TavilyBaseURL     string
 	FetchAllowPrivate bool
 	HTTPClientTimeout time.Duration
 }
@@ -27,6 +29,8 @@ func Load() Config {
 		DeepSeekModel:     getEnv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
 		SearchAPIKey:      os.Getenv("SEARCH_API_KEY"),
 		SearchBaseURL:     os.Getenv("SEARCH_BASE_URL"),
+		TavilyAPIKey:      os.Getenv("TAVILY_API_KEY"),
+		TavilyBaseURL:     getEnv("TAVILY_BASE_URL", "https://api.tavily.com"),
 		FetchAllowPrivate: getEnvBool("FETCH_ALLOW_PRIVATE", false),
 		HTTPClientTimeout: time.Duration(getEnvInt("DEEPSEEK_TIMEOUT_SECONDS", 60)) * time.Second,
 	}

@@ -130,6 +130,9 @@ function ChatMessageItemComponent({
 							<ReasoningContent>{message.reasoning}</ReasoningContent>
 						</Reasoning>
 					)}
+					{message.toolInvocations?.map((invocation) => (
+						<ToolInvocationCard invocation={invocation} key={invocation.id} />
+					))}
 					{message.content ? (
 						isUser ? (
 							<p className="whitespace-pre-wrap">{message.content}</p>
@@ -141,9 +144,6 @@ function ChatMessageItemComponent({
 							{isStreaming ? "Thinking..." : "No content"}
 						</p>
 					)}
-					{message.toolInvocations?.map((invocation) => (
-						<ToolInvocationCard invocation={invocation} key={invocation.id} />
-					))}
 				</MessageContent>
 			)}
 

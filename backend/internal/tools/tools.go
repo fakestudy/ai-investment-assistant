@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"ai-investment-assistant/backend/internal/config"
+
 	"golang.org/x/net/html"
 )
 
@@ -29,8 +30,9 @@ type Registry struct {
 func NewRegistry(cfg config.Config) Registry {
 	client := newHTTPClient(cfg)
 	return Registry{tools: map[string]Tool{
-		"web_search": newWebSearchTool(cfg, client),
-		"fetch_url":  newFetchURLTool(client, cfg.FetchAllowPrivate),
+		"web_search":   newWebSearchTool(cfg, client),
+		"fetch_url":    newFetchURLTool(client, cfg.FetchAllowPrivate),
+		"current_time": newCurrentTimeTool(),
 	}}
 }
 
@@ -47,6 +49,27 @@ func newHTTPClient(cfg config.Config) *http.Client {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return validateFetchURL(req.URL, cfg.FetchAllowPrivate)
 		},
+	}
+}
+
+func webSearchTool(cfg config.Config, client *http.Client) {
+
+}
+
+func newCurrentTimeTool() Tool {
+	return func(_ context.Context, _ map[string]any) (map[string]any, error) {
+		location, err := time.LoadLocation("Asia/Shanghai")
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now().In(location)
+		return map[string]any{
+			"timezone": "Asia/Shanghai",
+			"unix":     now.Unix(),
+			"iso8601":  now.Format(time.RFC3339),
+			"date":     now.Format("2006-01-02"),
+			"time":     now.Format("15:04:05"),
+		}, nil
 	}
 }
 
@@ -88,70 +111,6 @@ func (r Registry) Execute(ctx context.Context, name string, args map[string]any)
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
 	return tool(ctx, args)
-}
-
-func newWebSearchTool(cfg config.Config, client HTTPDoer) Tool {
-	return func(ctx context.Context, args map[string]any) (map[string]any, error) {
-		query := strings.TrimSpace(stringArg(args, "query"))
-		if query == "" {
-			return nil, errors.New("query is required")
-		}
-		if cfg.SearchAPIKey == "" {
-			return map[string]any{
-				"query":      query,
-				"configured": false,
-				"results":    []any{},
-				"message":    "web_search is not configured because SEARCH_API_KEY is empty",
-			}, nil
-		}
-		if strings.TrimSpace(cfg.SearchBaseURL) == "" {
-			return map[string]any{
-				"query":      query,
-				"configured": false,
-				"results":    []any{},
-				"message":    "web_search is not configured because SEARCH_BASE_URL is empty",
-			}, nil
-		}
-
-		endpoint, err := appendQuery(cfg.SearchBaseURL, "q", query)
-		if err != nil {
-			return nil, err
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+cfg.SearchAPIKey)
-		req.Header.Set("X-Subscription-Token", cfg.SearchAPIKey)
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("web_search upstream status %d", resp.StatusCode)
-		}
-		return map[string]any{
-			"query":      query,
-			"configured": true,
-			"raw":        string(body),
-		}, nil
-	}
-}
-
-func appendQuery(rawURL string, key string, value string) (string, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", errors.New("SEARCH_BASE_URL must be an absolute URL")
-	}
-	query := parsed.Query()
-	query.Set(key, value)
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
 }
 
 func newFetchURLTool(client HTTPDoer, allowPrivate bool) Tool {

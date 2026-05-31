@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import {
 	Tool,
 	ToolContent,
@@ -6,6 +9,7 @@ import {
 	ToolOutput,
 } from "@/components/ai-elements/tool";
 import type { ToolInvocation } from "../types";
+import { getToolInvocationCardOpenState } from "./tool-invocation-card-state";
 
 type ToolInvocationCardProps = {
 	invocation: ToolInvocation;
@@ -69,11 +73,19 @@ export function ToolInvocationCard({ invocation }: ToolInvocationCardProps) {
 	const resultSummary = hasError
 		? invocation.error
 		: summarizeResult(invocation.result);
+	const [isOpen, setIsOpen] = useState(() =>
+		getToolInvocationCardOpenState(invocation.status),
+	);
+
+	useEffect(() => {
+		setIsOpen(getToolInvocationCardOpenState(invocation.status));
+	}, [invocation.id, invocation.status]);
 
 	return (
 		<Tool
 			className="mb-0 border-zinc-200 bg-zinc-50/80 shadow-sm"
-			defaultOpen={invocation.status !== "completed"}
+			onOpenChange={setIsOpen}
+			open={isOpen}
 		>
 			<ToolHeader
 				state={toToolState(invocation.status)}
@@ -110,7 +122,7 @@ export function ToolInvocationCard({ invocation }: ToolInvocationCardProps) {
 					<p className="font-medium text-zinc-500 text-xs uppercase tracking-wide">
 						Summary
 					</p>
-					<p className="mt-1 break-words text-sm text-zinc-800">
+					<p className="mt-1 text-sm text-zinc-800 wrap-break-word">
 						{resultSummary}
 					</p>
 				</div>

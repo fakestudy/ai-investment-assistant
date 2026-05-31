@@ -14,11 +14,11 @@ func TestDefaultChatGraphSpec(t *testing.T) {
 	if spec.Model.Provider != "deepseek_openai_compatible" {
 		t.Fatalf("Model.Provider = %q", spec.Model.Provider)
 	}
-	if len(spec.Tools) != 2 {
-		t.Fatalf("Tools len = %d, want 2", len(spec.Tools))
+	if len(spec.Tools) != 3 {
+		t.Fatalf("Tools len = %d, want 3", len(spec.Tools))
 	}
-	if spec.Tools[0].Name != "web_search" || spec.Tools[1].Name != "fetch_url" {
-		t.Fatalf("Tools = %+v, want web_search and fetch_url", spec.Tools)
+	if spec.Tools[0].Name != "web_search" || spec.Tools[1].Name != "fetch_url" || spec.Tools[2].Name != "current_time" {
+		t.Fatalf("Tools = %+v, want web_search, fetch_url, and current_time", spec.Tools)
 	}
 	if len(spec.Edges) != 1 {
 		t.Fatalf("Edges len = %d, want 1", len(spec.Edges))

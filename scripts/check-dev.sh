@@ -151,7 +151,7 @@ else
 fi
 
 # 必填
-REQUIRED_VARS=(DEEPSEEK_API_KEY)
+REQUIRED_VARS=(DEEPSEEK_API_KEY TAVILY_API_KEY)
 for var in "${REQUIRED_VARS[@]}"; do
   val="${!var:-}"
   [[ -z "$val" ]] && val="$(load_env_value "$var")"
@@ -173,8 +173,7 @@ OPTIONAL_VARS=(
   DEEPSEEK_MODEL
   DEEPSEEK_TIMEOUT_SECONDS
   BFF_HTTP_ADDR
-  SEARCH_API_KEY
-  SEARCH_BASE_URL
+  TAVILY_BASE_URL
   FETCH_ALLOW_PRIVATE
 )
 for var in "${OPTIONAL_VARS[@]}"; do

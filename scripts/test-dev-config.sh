@@ -213,6 +213,14 @@ assert_contains "$REPO_ROOT/scripts/dev-stop.sh" 'docker compose stop nginx post
   "dev-stop.sh must stop nginx with postgres"
 assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'DEEPSEEK_TIMEOUT_SECONDS' \
   "check-dev.sh must check DEEPSEEK_TIMEOUT_SECONDS"
+assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'REQUIRED_VARS=(DEEPSEEK_API_KEY TAVILY_API_KEY)' \
+  "check-dev.sh must require TAVILY_API_KEY"
+assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'TAVILY_BASE_URL' \
+  "check-dev.sh must check TAVILY_BASE_URL"
+assert_not_contains "$REPO_ROOT/scripts/check-dev.sh" 'SEARCH_API_KEY' \
+  "check-dev.sh must not check legacy SEARCH_API_KEY"
+assert_not_contains "$REPO_ROOT/scripts/check-dev.sh" 'SEARCH_BASE_URL' \
+  "check-dev.sh must not check legacy SEARCH_BASE_URL"
 assert_not_contains "$REPO_ROOT/scripts/check-dev.sh" 'HTTP_CLIENT_TIMEOUT_SECONDS' \
   "check-dev.sh must not check legacy HTTP_CLIENT_TIMEOUT_SECONDS"
 assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'backend_http_port' \
