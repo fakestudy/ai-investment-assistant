@@ -105,6 +105,15 @@ export function editMessage(
 	);
 }
 
+export async function cancelChatStream(messageId: string): Promise<void> {
+	await requestVoid(
+		`/api/chat/streams/${encodeURIComponent(messageId)}/cancel`,
+		{
+			method: "POST",
+		},
+	);
+}
+
 function parseSseEvent(rawEvent: string): ChatStreamEvent | undefined {
 	const data = rawEvent
 		.split(/\r?\n/)
@@ -120,24 +129,12 @@ function parseSseEvent(rawEvent: string): ChatStreamEvent | undefined {
 	return JSON.parse(data) as ChatStreamEvent;
 }
 
-export async function streamChat(
-	request: StreamChatRequest,
+async function readSseResponse(
+	response: Response,
 	options: {
-		signal: AbortSignal;
 		onEvent: (event: ChatStreamEvent) => void;
 	},
 ): Promise<void> {
-	const response = await fetch(buildApiUrl("/api/chat/stream"), {
-		method: "POST",
-		headers: jsonHeaders(),
-		body: JSON.stringify(request),
-		signal: options.signal,
-	});
-
-	if (!response.ok) {
-		throw new Error(`Request failed with status ${response.status}`);
-	}
-
 	if (!response.body) {
 		throw new Error("Stream response body is empty");
 	}
@@ -169,4 +166,48 @@ export async function streamChat(
 	if (event) {
 		options.onEvent(event);
 	}
+}
+
+export async function streamChat(
+	request: StreamChatRequest,
+	options: {
+		signal: AbortSignal;
+		onEvent: (event: ChatStreamEvent) => void;
+	},
+): Promise<void> {
+	const response = await fetch(buildApiUrl("/api/chat/stream"), {
+		method: "POST",
+		headers: jsonHeaders(),
+		body: JSON.stringify(request),
+		signal: options.signal,
+	});
+
+	if (!response.ok) {
+		throw new Error(`Request failed with status ${response.status}`);
+	}
+
+	await readSseResponse(response, options);
+}
+
+export async function resumeChatStream(
+	messageId: string,
+	options: {
+		signal: AbortSignal;
+		onEvent: (event: ChatStreamEvent) => void;
+	},
+): Promise<void> {
+	const response = await fetch(
+		buildApiUrl(`/api/chat/streams/${encodeURIComponent(messageId)}`),
+		{
+			method: "GET",
+			headers: jsonHeaders(),
+			signal: options.signal,
+		},
+	);
+
+	if (!response.ok) {
+		throw new Error(`Request failed with status ${response.status}`);
+	}
+
+	await readSseResponse(response, options);
 }

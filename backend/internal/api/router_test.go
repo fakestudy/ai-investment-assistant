@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"ai-investment-assistant/backend/internal/chat"
 	"ai-investment-assistant/backend/internal/conversation"
 	"ai-investment-assistant/backend/internal/store"
 	"github.com/gin-gonic/gin"
@@ -214,6 +215,10 @@ func TestRouterReturnsNotFoundErrors(t *testing.T) {
 }
 
 func newTestRouter(t *testing.T) (*gin.Engine, *conversation.Service) {
+	return newTestRouterWithChat(t, nil)
+}
+
+func newTestRouterWithChat(t *testing.T, chats *chat.Service) (*gin.Engine, *conversation.Service) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -230,7 +235,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *conversation.Service) {
 	}
 
 	svc := conversation.NewService(db)
-	return NewRouter(svc), svc
+	return NewRouter(svc, chats), svc
 }
 
 func performRequest(router http.Handler, method string, path string, body any) *httptest.ResponseRecorder {

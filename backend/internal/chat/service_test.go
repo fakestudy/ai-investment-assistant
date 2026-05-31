@@ -201,7 +201,7 @@ func TestServiceMarksToolResultErrorsWithoutChangingInvocationID(t *testing.T) {
 	}
 }
 
-func TestServicePersistsPartialAssistantWhenClientCancels(t *testing.T) {
+func TestServiceKeepsRunningAfterSubscriberContextCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	conversations := newTestConversationService(t)
@@ -209,16 +209,15 @@ func TestServicePersistsPartialAssistantWhenClientCancels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConversation() error = %v", err)
 	}
-	svc := NewService(conversations, fakeAgent{
-		events: []AgentEvent{
-			{Kind: "delta", Text: "partial"},
-			{Kind: "delta", Text: " ignored"},
-		},
-	})
+	agent := newReleasedClosingAgent(
+		AgentEvent{Kind: "delta", Text: "partial"},
+		AgentEvent{Kind: "delta", Text: " complete"},
+	)
+	svc := NewService(conversations, agent)
 
 	events, err := svc.Stream(ctx, StreamChatRequest{
 		ConversationID: created.ID,
-		Message:        "Cancel after first chunk",
+		Message:        "Keep running after page refresh",
 	})
 	if err != nil {
 		t.Fatalf("Stream() error = %v", err)
@@ -233,6 +232,10 @@ func TestServicePersistsPartialAssistantWhenClientCancels(t *testing.T) {
 	}
 	cancel()
 	waitForClosedEvents(t, events)
+	agent.releaseSecond()
+	waitForAssistantMessage(t, conversations, created.ID, func(message conversation.ChatMessage) bool {
+		return message.Content == "partial complete" && message.Status == "done"
+	})
 
 	messages, err := conversations.ListMessages(context.Background(), created.ID)
 	if err != nil {
@@ -241,17 +244,65 @@ func TestServicePersistsPartialAssistantWhenClientCancels(t *testing.T) {
 	if len(messages) != 2 {
 		t.Fatalf("ListMessages() len = %d, want 2", len(messages))
 	}
-	if messages[1].Content != "partial" {
-		t.Fatalf("assistant content after cancellation = %q, want partial", messages[1].Content)
+	if messages[1].Content != "partial complete" {
+		t.Fatalf("assistant content after subscriber cancellation = %q, want complete answer", messages[1].Content)
 	}
-	if messages[1].Status == "streaming" {
-		t.Fatalf("assistant status after cancellation = %q, want non-streaming terminal status", messages[1].Status)
+	if messages[1].Status != "done" {
+		t.Fatalf("assistant status after subscriber cancellation = %q, want done", messages[1].Status)
 	}
 }
 
-func TestServiceDoesNotPersistDeltaBlockedByClientCancellation(t *testing.T) {
+func TestServiceResumesActiveStreamFromAssistantMessageID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	agent := newReleasedClosingAgent(
+		AgentEvent{Kind: "delta", Text: "first"},
+		AgentEvent{Kind: "delta", Text: " second"},
+	)
+	svc := NewService(conversations, agent)
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID: created.ID,
+		Message:        "Resume after refresh",
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	first := <-events
+	if first.Type != "message_created" {
+		t.Fatalf("first event type = %q, want message_created", first.Type)
+	}
+	assistantID := first.Message.ID
+	firstDelta := <-events
+	if firstDelta.Type != "delta" || firstDelta.Text != "first" {
+		t.Fatalf("first delta = %+v, want first delta", firstDelta)
+	}
+
+	cancel()
+	waitForClosedEvents(t, events)
+
+	resumed, err := svc.ResumeStream(context.Background(), assistantID)
+	if err != nil {
+		t.Fatalf("ResumeStream() error = %v", err)
+	}
+	agent.releaseSecond()
+	collected := collectEventsWithin(t, resumed, 500*time.Millisecond)
+	assertEventTypes(t, collected, []string{"message_created", "delta", "delta", "title", "done"})
+	if collected[0].Message.ID != assistantID {
+		t.Fatalf("resumed assistant id = %q, want %q", collected[0].Message.ID, assistantID)
+	}
+	if collected[1].Text != "first" || collected[2].Text != " second" {
+		t.Fatalf("resumed deltas = [%q %q], want replayed first and live second", collected[1].Text, collected[2].Text)
+	}
+}
+
+func TestServiceCancelStreamStopsBackgroundGeneration(t *testing.T) {
+	ctx := context.Background()
 	conversations := newTestConversationService(t)
 	created, err := conversations.CreateConversation(ctx)
 	if err != nil {
@@ -265,7 +316,7 @@ func TestServiceDoesNotPersistDeltaBlockedByClientCancellation(t *testing.T) {
 
 	events, err := svc.Stream(ctx, StreamChatRequest{
 		ConversationID: created.ID,
-		Message:        "Cancel while second delta is blocked",
+		Message:        "Stop before second delta",
 	})
 	if err != nil {
 		t.Fatalf("Stream() error = %v", err)
@@ -276,12 +327,13 @@ func TestServiceDoesNotPersistDeltaBlockedByClientCancellation(t *testing.T) {
 	}
 	firstDelta := <-events
 	if firstDelta.Type != "delta" || firstDelta.Text != "sent" {
-		t.Fatalf("first delta = %+v, want sent delta", firstDelta)
+		t.Fatalf("first delta = %+v, want sent", firstDelta)
 	}
 
+	if err := svc.CancelStream(context.Background(), first.Message.ID); err != nil {
+		t.Fatalf("CancelStream() error = %v", err)
+	}
 	agent.releaseSecond()
-	waitForSignal(t, agent.secondDelivered, "second agent event to be received by service")
-	cancel()
 	waitForClosedEvents(t, events)
 
 	messages, err := conversations.ListMessages(context.Background(), created.ID)
@@ -292,10 +344,10 @@ func TestServiceDoesNotPersistDeltaBlockedByClientCancellation(t *testing.T) {
 		t.Fatalf("ListMessages() len = %d, want 2", len(messages))
 	}
 	if messages[1].Content != "sent" {
-		t.Fatalf("assistant content after blocked cancellation = %q, want only successfully sent delta", messages[1].Content)
+		t.Fatalf("assistant content after explicit cancel = %q, want only successfully sent delta", messages[1].Content)
 	}
 	if strings.Contains(messages[1].Content, "unsent") {
-		t.Fatalf("assistant content after blocked cancellation = %q, must not include unsent delta", messages[1].Content)
+		t.Fatalf("assistant content after explicit cancel = %q, must not include unsent delta", messages[1].Content)
 	}
 }
 
@@ -692,6 +744,51 @@ func (a *twoStepAgent) releaseSecond() {
 	close(a.release)
 }
 
+type releasedClosingAgent struct {
+	first   AgentEvent
+	second  AgentEvent
+	release chan struct{}
+}
+
+func newReleasedClosingAgent(first AgentEvent, second AgentEvent) *releasedClosingAgent {
+	return &releasedClosingAgent{
+		first:   first,
+		second:  second,
+		release: make(chan struct{}),
+	}
+}
+
+func (a *releasedClosingAgent) Stream(ctx context.Context, messages []AgentMessage) (<-chan AgentEvent, <-chan error) {
+	events := make(chan AgentEvent)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		select {
+		case <-ctx.Done():
+			errs <- ctx.Err()
+			return
+		case events <- a.first:
+		}
+		select {
+		case <-ctx.Done():
+			errs <- ctx.Err()
+			return
+		case <-a.release:
+		}
+		select {
+		case <-ctx.Done():
+			errs <- ctx.Err()
+		case events <- a.second:
+		}
+	}()
+	return events, errs
+}
+
+func (a *releasedClosingAgent) releaseSecond() {
+	close(a.release)
+}
+
 type capturingAgent struct {
 	events   []AgentEvent
 	messages []AgentMessage
@@ -758,6 +855,31 @@ func waitForSignal(t *testing.T, signal <-chan struct{}, label string) {
 	case <-signal:
 	case <-timer.C:
 		t.Fatalf("timed out waiting for %s", label)
+	}
+}
+
+func waitForAssistantMessage(t *testing.T, conversations *conversation.Service, conversationID string, ready func(message conversation.ChatMessage) bool) {
+	t.Helper()
+
+	deadline := time.After(500 * time.Millisecond)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			messages, _ := conversations.ListMessages(context.Background(), conversationID)
+			t.Fatalf("timed out waiting for assistant message; messages = %+v", messages)
+		case <-ticker.C:
+			messages, err := conversations.ListMessages(context.Background(), conversationID)
+			if err != nil {
+				t.Fatalf("ListMessages() while waiting error = %v", err)
+			}
+			for _, message := range messages {
+				if message.Role == "assistant" && ready(message) {
+					return
+				}
+			}
+		}
 	}
 }
 
