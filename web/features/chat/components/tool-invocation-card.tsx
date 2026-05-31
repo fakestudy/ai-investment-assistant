@@ -12,6 +12,7 @@ import type { ToolInvocation } from "../types";
 import { getToolInvocationCardOpenState } from "./tool-invocation-card-state";
 
 type ToolInvocationCardProps = {
+	hideHeaderIcon?: boolean;
 	invocation: ToolInvocation;
 };
 
@@ -68,7 +69,10 @@ function summarizeResult(result: unknown) {
 	return "Result available";
 }
 
-export function ToolInvocationCard({ invocation }: ToolInvocationCardProps) {
+export function ToolInvocationCard({
+	hideHeaderIcon = false,
+	invocation,
+}: ToolInvocationCardProps) {
 	const hasError = invocation.status === "error" && Boolean(invocation.error);
 	const resultSummary = hasError
 		? invocation.error
@@ -89,6 +93,7 @@ export function ToolInvocationCard({ invocation }: ToolInvocationCardProps) {
 		>
 			<ToolHeader
 				state={toToolState(invocation.status)}
+				showIcon={!hideHeaderIcon}
 				toolName={invocation.toolName}
 				type="dynamic-tool"
 			/>

@@ -35,6 +35,7 @@ export type ToolPart = ToolUIPart | DynamicToolUIPart;
 export type ToolHeaderProps = {
 	title?: string;
 	className?: string;
+	showIcon?: boolean;
 } & (
 	| { type: ToolUIPart["type"]; state: ToolUIPart["state"]; toolName?: never }
 	| {
@@ -73,6 +74,7 @@ export const getStatusBadge = (status: ToolPart["state"]) => (
 
 export const ToolHeader = ({
 	className,
+	showIcon = true,
 	title,
 	type,
 	state,
@@ -91,7 +93,7 @@ export const ToolHeader = ({
 			{...props}
 		>
 			<div className="flex items-center gap-2">
-				<WrenchIcon className="size-4 text-muted-foreground" />
+				{showIcon && <WrenchIcon className="size-4 text-muted-foreground" />}
 				<span className="font-medium text-sm">{title ?? derivedName}</span>
 				{getStatusBadge(state)}
 			</div>

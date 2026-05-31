@@ -11,10 +11,12 @@ import {
 	streamChat,
 } from "./api";
 import {
+	appendReasoningTimelinePart,
 	getLatestStreamingAssistantMessageId,
 	getResumableStreamingMessageId,
 	resetStreamCreatedMessage,
 	resolveLoadedConversationMessages,
+	upsertToolTimelinePart,
 } from "./chat-ui-state";
 import type {
 	ChatError,
@@ -232,6 +234,10 @@ const reduceStreamEvent = (
 					(message) => ({
 						...message,
 						reasoning: `${message.reasoning ?? ""}${event.text}`,
+						timelineParts: appendReasoningTimelinePart(message.timelineParts, {
+							id: createLocalId(),
+							text: event.text,
+						}),
 						status: "streaming",
 					}),
 				),
@@ -250,6 +256,10 @@ const reduceStreamEvent = (
 						...message,
 						toolInvocations: upsertToolInvocation(
 							message.toolInvocations,
+							event.invocation,
+						),
+						timelineParts: upsertToolTimelinePart(
+							message.timelineParts,
 							event.invocation,
 						),
 						status: "streaming",

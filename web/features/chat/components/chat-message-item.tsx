@@ -17,17 +17,15 @@ import {
 	MessageContent,
 	MessageToolbar,
 } from "@/components/ai-elements/message";
-import {
-	Reasoning,
-	ReasoningContent,
-	ReasoningTrigger,
-} from "@/components/ai-elements/reasoning";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "../types";
 import { ChatMarkdown } from "./chat-markdown";
-import { ToolInvocationCard } from "./tool-invocation-card";
+import {
+	ChatMessageTimeline,
+	hasTimelineDetails,
+} from "./chat-message-timeline";
 
 type ChatMessageItemProps = {
 	message: ChatMessage;
@@ -124,26 +122,18 @@ function ChatMessageItemComponent({
 							: "w-full max-w-none text-zinc-900",
 					)}
 				>
-					{message.reasoning && (
-						<Reasoning isStreaming={isStreaming}>
-							<ReasoningTrigger />
-							<ReasoningContent>{message.reasoning}</ReasoningContent>
-						</Reasoning>
-					)}
-					{message.toolInvocations?.map((invocation) => (
-						<ToolInvocationCard invocation={invocation} key={invocation.id} />
-					))}
+					<ChatMessageTimeline isStreaming={isStreaming} message={message} />
 					{message.content ? (
 						isUser ? (
 							<p className="whitespace-pre-wrap">{message.content}</p>
 						) : (
 							<ChatMarkdown content={message.content} />
 						)
-					) : (
+					) : !hasTimelineDetails(message) ? (
 						<p className="text-muted-foreground text-sm">
 							{isStreaming ? "Thinking..." : "No content"}
 						</p>
-					)}
+					) : null}
 				</MessageContent>
 			)}
 
