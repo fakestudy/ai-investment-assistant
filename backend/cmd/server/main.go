@@ -17,7 +17,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	log.Printf("backend chat api listening on :%s", cfg.Port)
+	log.Printf("backend chat api listening on %s", cfg.HTTPAddr)
 
 	db, err := store.OpenPostgres(context.Background(), cfg.DatabaseURL)
 	if err != nil {
@@ -35,7 +35,7 @@ func main() {
 
 func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
 	return &http.Server{
-		Addr:              ":" + cfg.Port,
+		Addr:              cfg.HTTPAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,

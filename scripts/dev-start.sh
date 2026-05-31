@@ -7,8 +7,11 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-RUN_DIR="$REPO_ROOT/.run"
-LOG_DIR="$REPO_ROOT/.run/logs"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/dev-config.sh"
+
+RUN_DIR="${DEV_RUN_DIR:-$REPO_ROOT/.run}"
+LOG_DIR="${DEV_LOG_DIR:-$RUN_DIR/logs}"
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
@@ -39,7 +42,7 @@ is_running() {
 }
 
 # ---- 1. 加载 .env ----
-ENV_FILE="$REPO_ROOT/.env"
+ENV_FILE="${DEV_ENV_FILE:-$REPO_ROOT/.env}"
 if [[ ! -f "$ENV_FILE" ]]; then
   error ".env 不存在，请先 cp .env.example .env 并填写配置"
   exit 1
@@ -55,9 +58,9 @@ if [[ "${DATABASE_URL:-}" == *"@postgres:"* ]]; then
   warn "DATABASE_URL 中的 host 已临时替换为 localhost（仅本进程生效）"
 fi
 
-# BFF_HTTP_ADDR 在 main.go 里会被拼成 ":" + cfg.Port，去掉前导冒号避免 ::8081
-if [[ "${BFF_HTTP_ADDR:-}" == :* ]]; then
-  export BFF_HTTP_ADDR="${BFF_HTTP_ADDR#:}"
+if ! BACKEND_HTTP_URL="$(backend_http_url "${BFF_HTTP_ADDR:-}")"; then
+  error "BFF_HTTP_ADDR 必须是 :port 或 host:port"
+  exit 1
 fi
 
 # ---- 2. 启动 postgres (docker compose) ----
@@ -96,6 +99,7 @@ else
     ok "backend 已启动 (pid=$(cat "$BACKEND_PID_FILE"))，日志: $BACKEND_LOG"
   else
     error "backend 启动失败，请查看 $BACKEND_LOG"
+    exit 1
   fi
 fi
 
@@ -121,13 +125,14 @@ else
     ok "web 已启动 (pid=$(cat "$WEB_PID_FILE"))，日志: $WEB_LOG"
   else
     error "web 启动失败，请查看 $WEB_LOG"
+    exit 1
   fi
 fi
 
 echo ""
 ok "开发环境已启动"
 echo "  - postgres : docker container investment-postgres (5432)"
-echo "  - backend  : http://localhost:${BFF_HTTP_ADDR:-8081}  (log: $BACKEND_LOG)"
+echo "  - backend  : $BACKEND_HTTP_URL  (log: $BACKEND_LOG)"
 echo "  - web      : http://localhost:3000                    (log: $WEB_LOG)"
 echo ""
 echo "查看日志: tail -f $BACKEND_LOG | tail -f $WEB_LOG"

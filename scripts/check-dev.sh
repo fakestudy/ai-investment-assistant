@@ -30,6 +30,9 @@ ver_ge() {
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/dev-config.sh"
+
 echo "${C_BLD}AI Investment Assistant - 开发环境检测${C_RST}"
 echo "项目根目录: $REPO_ROOT"
 
@@ -168,11 +171,11 @@ OPTIONAL_VARS=(
   DATABASE_URL
   DEEPSEEK_BASE_URL
   DEEPSEEK_MODEL
+  DEEPSEEK_TIMEOUT_SECONDS
   BFF_HTTP_ADDR
   SEARCH_API_KEY
   SEARCH_BASE_URL
   FETCH_ALLOW_PRIVATE
-  HTTP_CLIENT_TIMEOUT_SECONDS
 )
 for var in "${OPTIONAL_VARS[@]}"; do
   val="${!var:-}"
@@ -207,9 +210,16 @@ check_port() {
   fi
 }
 
-check_port 3000 "web/Next.js"  fail
-check_port 8081 "backend/chi"  fail
-check_port 5432 "postgres"     warn
+if ! BACKEND_HTTP_PORT="$(backend_http_port "${BFF_HTTP_ADDR:-$(load_env_value BFF_HTTP_ADDR)}")"; then
+  fail "BFF_HTTP_ADDR 格式无效，必须是 :port 或 host:port"
+  BACKEND_HTTP_PORT=""
+fi
+
+check_port 3000 "web/Next.js"       fail
+if [[ -n "$BACKEND_HTTP_PORT" ]]; then
+  check_port "$BACKEND_HTTP_PORT" "backend/Gin" fail
+fi
+check_port 5432 "postgres"          warn
 
 # ---------------- 5. 汇总 ----------------
 section "汇总"
