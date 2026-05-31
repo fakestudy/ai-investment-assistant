@@ -390,6 +390,83 @@ func TestServiceListMessagesIncludesToolInvocations(t *testing.T) {
 	}
 }
 
+func TestServiceListMessagesIncludesOrderedTimelineParts(t *testing.T) {
+	ctx := context.Background()
+	svc, db := newTestServiceWithDB(t)
+
+	conversation, err := svc.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	message, err := svc.CreateMessage(ctx, CreateMessageInput{
+		ConversationID: conversation.ID,
+		Role:           "assistant",
+		Content:        "Answer",
+		Reasoning:      "Search first. Then answer.",
+		Status:         "complete",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage() error = %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&store.ToolInvocation{
+		ID:        "tool-timeline",
+		MessageID: message.ID,
+		ToolName:  "web_search",
+		Args:      datatypes.JSON([]byte(`{"query":"Apple market cap"}`)),
+		Result:    datatypes.JSON([]byte(`{"summary":"4.58T"}`)),
+		Status:    "complete",
+	}).Error; err != nil {
+		t.Fatalf("Create tool invocation error = %v", err)
+	}
+	toolInvocationID := "tool-timeline"
+	if err := db.WithContext(ctx).Create(&[]store.MessagePart{
+		{
+			ID:         "part-reasoning-1",
+			MessageID:  message.ID,
+			Type:       "reasoning",
+			OrderIndex: 0,
+			Text:       "Search first.",
+		},
+		{
+			ID:               "part-tool-1",
+			MessageID:        message.ID,
+			Type:             "tool",
+			OrderIndex:       1,
+			ToolInvocationID: &toolInvocationID,
+		},
+		{
+			ID:         "part-reasoning-2",
+			MessageID:  message.ID,
+			Type:       "reasoning",
+			OrderIndex: 2,
+			Text:       " Then answer.",
+		},
+	}).Error; err != nil {
+		t.Fatalf("Create message parts error = %v", err)
+	}
+
+	messages, err := svc.ListMessages(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("ListMessages() len = %d, want 1", len(messages))
+	}
+	parts := messages[0].TimelineParts
+	if len(parts) != 3 {
+		t.Fatalf("TimelineParts len = %d, want 3: %+v", len(parts), parts)
+	}
+	if parts[0].Type != "reasoning" || parts[0].Text != "Search first." || parts[0].OrderIndex != 0 {
+		t.Fatalf("first part = %+v, want first reasoning part", parts[0])
+	}
+	if parts[1].Type != "tool" || parts[1].Invocation == nil || parts[1].Invocation.ToolName != "web_search" || parts[1].OrderIndex != 1 {
+		t.Fatalf("second part = %+v, want tool part with invocation", parts[1])
+	}
+	if parts[2].Type != "reasoning" || parts[2].Text != " Then answer." || parts[2].OrderIndex != 2 {
+		t.Fatalf("third part = %+v, want second reasoning part", parts[2])
+	}
+}
+
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 

@@ -27,11 +27,13 @@ export type ChatTimelinePart =
 	| {
 			id: string;
 			type: "reasoning";
+			orderIndex?: number;
 			text: string;
 	  }
 	| {
 			id: string;
 			type: "tool";
+			orderIndex?: number;
 			invocation: ToolInvocation;
 	  };
 

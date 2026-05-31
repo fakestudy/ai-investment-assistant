@@ -165,6 +165,54 @@ func TestServiceMapsAgentToolEventsToStreamInvocations(t *testing.T) {
 	}
 }
 
+func TestServicePersistsTimelinePartsInAgentEventOrder(t *testing.T) {
+	ctx := context.Background()
+	conversations := newTestConversationService(t)
+	created, err := conversations.CreateConversation(ctx)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	svc := NewService(conversations, fakeAgent{
+		events: []AgentEvent{
+			{Kind: "reasoning", Text: "Search first. "},
+			{Kind: "tool_call", ToolCallID: "call-search-1", ToolName: "web_search", ToolArgs: map[string]any{"query": "Apple market cap"}},
+			{Kind: "tool_result", ToolCallID: "call-search-1", ToolName: "web_search", ToolArgs: map[string]any{"query": "Apple market cap"}, ToolResult: map[string]any{"summary": "4.58T"}, LatencyMS: 12},
+			{Kind: "reasoning", Text: "Then summarize."},
+			{Kind: "delta", Text: "Apple is valuable."},
+		},
+	})
+
+	events, err := svc.Stream(ctx, StreamChatRequest{
+		ConversationID: created.ID,
+		Message:        "Apple market cap",
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	collectEvents(t, events)
+
+	messages, err := conversations.ListMessages(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("ListMessages() len = %d, want user and assistant", len(messages))
+	}
+	parts := messages[1].TimelineParts
+	if len(parts) != 3 {
+		t.Fatalf("TimelineParts len = %d, want 3: %+v", len(parts), parts)
+	}
+	if parts[0].Type != "reasoning" || parts[0].Text != "Search first. " || parts[0].OrderIndex != 0 {
+		t.Fatalf("first part = %+v, want initial reasoning", parts[0])
+	}
+	if parts[1].Type != "tool" || parts[1].Invocation == nil || parts[1].Invocation.Status != "completed" || parts[1].OrderIndex != 1 {
+		t.Fatalf("second part = %+v, want completed tool", parts[1])
+	}
+	if parts[2].Type != "reasoning" || parts[2].Text != "Then summarize." || parts[2].OrderIndex != 2 {
+		t.Fatalf("third part = %+v, want trailing reasoning", parts[2])
+	}
+}
+
 func TestServiceMarksToolResultErrorsWithoutChangingInvocationID(t *testing.T) {
 	ctx := context.Background()
 	conversations := newTestConversationService(t)

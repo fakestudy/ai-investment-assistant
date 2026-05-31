@@ -24,6 +24,7 @@ type Message struct {
 	Status          string
 	CreatedAt       time.Time
 	ToolInvocations []ToolInvocation `gorm:"foreignKey:MessageID;constraint:OnDelete:CASCADE;"`
+	Parts           []MessagePart    `gorm:"foreignKey:MessageID;constraint:OnDelete:CASCADE;"`
 }
 
 type ToolInvocation struct {
@@ -37,4 +38,16 @@ type ToolInvocation struct {
 	LatencyMS int64
 	Status    string
 	CreatedAt time.Time
+}
+
+type MessagePart struct {
+	ID               string `gorm:"primaryKey"`
+	MessageID        string `gorm:"index;not null"`
+	Message          Message
+	Type             string
+	OrderIndex       int
+	Text             string
+	ToolInvocationID *string
+	ToolInvocation   *ToolInvocation
+	CreatedAt        time.Time
 }

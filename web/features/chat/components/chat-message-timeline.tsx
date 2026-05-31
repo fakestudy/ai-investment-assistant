@@ -17,7 +17,9 @@ type ChatMessageTimelineProps = {
 
 function getTimelineParts(message: ChatMessage): ChatTimelinePart[] {
 	if (message.timelineParts?.length) {
-		return message.timelineParts;
+		return [...message.timelineParts].sort(
+			(first, second) => (first.orderIndex ?? 0) - (second.orderIndex ?? 0),
+		);
 	}
 
 	const parts: ChatTimelinePart[] = [];
