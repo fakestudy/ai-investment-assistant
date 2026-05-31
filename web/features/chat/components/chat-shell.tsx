@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useChatStore } from "../store";
+import { ChatErrorToast } from "./chat-error-toast";
 import { ChatMain } from "./chat-main";
 import { ChatSidebar } from "./chat-sidebar";
 
@@ -31,6 +32,7 @@ export function ChatShell({ conversationId }: ChatShellProps) {
 
 	return (
 		<div className="flex h-screen bg-[linear-gradient(180deg,#fafafa_0%,#ffffff_42%)] text-zinc-950">
+			<ChatErrorToast />
 			<ChatSidebar />
 			<ChatMain />
 		</div>

@@ -97,7 +97,7 @@ export function ChatSidebar() {
 	const router = useRouter();
 
 	return (
-		<aside className="flex w-[260px] shrink-0 flex-col border-zinc-200 border-r bg-zinc-50/95 p-3">
+		<aside className="flex w-65 shrink-0 flex-col border-zinc-200 border-r bg-zinc-50/95 p-3">
 			<button
 				className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 font-medium text-sm text-zinc-900 shadow-sm transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
 				disabled={isLoadingConversations}
@@ -151,7 +151,22 @@ export function ChatSidebar() {
 				conversation={activeConversation}
 				open={isDeleteDialogOpen}
 				onOpenChange={setIsDeleteDialogOpen}
-				onDelete={deleteActiveConversation}
+				onDelete={async () => {
+					const result = await deleteActiveConversation();
+
+					if (!result.deleted) {
+						return;
+					}
+
+					if (result.nextConversationId) {
+						router.replace(
+							`/chat/${encodeURIComponent(result.nextConversationId)}`,
+						);
+						return;
+					}
+
+					router.replace("/chat");
+				}}
 			/>
 		</aside>
 	);
