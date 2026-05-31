@@ -59,14 +59,14 @@ cp .env.example .env
 make check-dev
 ```
 
-该命令会调用 [scripts/check-dev.sh](file:///Users/bytedance/Desktop/ai-investment-assistant/scripts/check-dev.sh)，检查系统工具、工具链版本、`.env` 完整性以及 3000 / 8081 / 5432 端口占用情况。出现 `✗` 时请先修复再继续。
+该命令会调用 [scripts/check-dev.sh](file:///Users/bytedance/Desktop/ai-investment-assistant/scripts/check-dev.sh)，检查系统工具、工具链版本、`.env` 完整性以及 3000 / 3001 / 8081 / 5432 端口占用情况。出现 `✗` 时请先修复再继续。
 
 ### 3. 启动 / 停止本地开发环境
 
 统一通过 Makefile 提供的命令操作，不需要手动逐个起前后端。
 
 ```bash
-make dev-start   # 启动本地开发环境 (postgres + backend + web)
+make dev-start   # 启动本地开发环境 (postgres + nginx + backend + web)
 make dev-end     # 停止本地开发环境
 ```
 
@@ -74,7 +74,8 @@ make dev-end     # 停止本地开发环境
 
 启动后默认端口：
 
-- 前端 Web：3000 — <http://localhost:3000>
+- Nginx 统一入口：3000 — <http://localhost:3000>
+- 前端 Web：3001 — <http://localhost:3001>
 - 后端 BFF：8081
 - Postgres：5432
 

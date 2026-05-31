@@ -6,7 +6,7 @@ import type {
 } from "./types";
 
 export const CHAT_API_BASE =
-	process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+	process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000";
 
 type JsonRequestInit = Omit<RequestInit, "body"> & {
 	body?: unknown;
