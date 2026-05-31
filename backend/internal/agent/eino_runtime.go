@@ -28,7 +28,7 @@ type EinoRuntime struct {
 	tools map[string]einotool.InvokableTool
 }
 
-const maxEinoToolIterations = 3
+const maxEinoToolIterations = 30
 
 func NewEinoRuntime(ctx context.Context, cfg config.Config, registry tools.Registry, spec GraphSpec) (*EinoRuntime, error) {
 	if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
