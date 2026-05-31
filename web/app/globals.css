@@ -128,3 +128,93 @@
 		@apply font-sans;
 	}
 }
+
+@layer components {
+	.chat-markdown {
+		@apply w-full text-zinc-900 text-sm leading-7;
+	}
+
+	.chat-markdown > :first-child {
+		margin-top: 0;
+	}
+
+	.chat-markdown > :last-child {
+		margin-bottom: 0;
+	}
+
+	.chat-markdown p {
+		@apply my-3;
+	}
+
+	.chat-markdown a {
+		@apply font-medium text-zinc-950 underline decoration-zinc-300 underline-offset-4;
+	}
+
+	.chat-markdown strong {
+		@apply font-semibold text-zinc-950;
+	}
+
+	.chat-markdown ul,
+	.chat-markdown ol {
+		@apply my-3 pl-5;
+	}
+
+	.chat-markdown ul {
+		@apply list-disc;
+	}
+
+	.chat-markdown ol {
+		@apply list-decimal;
+	}
+
+	.chat-markdown li {
+		@apply my-1 pl-1;
+	}
+
+	.chat-markdown blockquote {
+		@apply my-4 border-zinc-200 border-l-2 pl-4 text-zinc-600;
+	}
+
+	.chat-markdown table {
+		@apply my-4 w-full border-collapse overflow-hidden rounded-2xl text-left text-sm;
+	}
+
+	.chat-markdown th,
+	.chat-markdown td {
+		@apply border border-zinc-200 px-3 py-2 align-top;
+	}
+
+	.chat-markdown th {
+		@apply bg-zinc-50 font-semibold text-zinc-950;
+	}
+
+	.chat-markdown hr {
+		@apply my-6 border-zinc-200;
+	}
+
+	.chat-markdown h1,
+	.chat-markdown h2,
+	.chat-markdown h3 {
+		@apply mb-3 font-semibold text-zinc-950 tracking-tight;
+	}
+
+	.chat-markdown h1 {
+		@apply mt-6 text-2xl;
+	}
+
+	.chat-markdown h2 {
+		@apply mt-5 text-xl;
+	}
+
+	.chat-markdown h3 {
+		@apply mt-4 text-lg;
+	}
+
+	.chat-markdown pre {
+		@apply my-4;
+	}
+
+	.chat-markdown-inline-code {
+		@apply rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-zinc-900 text-xs;
+	}
+}
