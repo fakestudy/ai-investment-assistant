@@ -15,7 +15,6 @@ import {
 	MessageAction,
 	MessageActions,
 	MessageContent,
-	MessageResponse,
 	MessageToolbar,
 } from "@/components/ai-elements/message";
 import {
@@ -27,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "../types";
+import { ChatMarkdown } from "./chat-markdown";
 import { ToolInvocationCard } from "./tool-invocation-card";
 
 type ChatMessageItemProps = {
@@ -134,9 +134,7 @@ function ChatMessageItemComponent({
 						isUser ? (
 							<p className="whitespace-pre-wrap">{message.content}</p>
 						) : (
-							<MessageResponse isAnimating={isStreaming}>
-								{message.content}
-							</MessageResponse>
+							<ChatMarkdown content={message.content} />
 						)
 					) : (
 						<p className="text-muted-foreground text-sm">
