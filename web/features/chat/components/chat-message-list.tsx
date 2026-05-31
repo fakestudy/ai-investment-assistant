@@ -1,11 +1,18 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import {
 	Conversation,
 	ConversationContent,
 	ConversationEmptyState,
 	ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
+import { Button } from "@/components/ui/button";
+import {
+	getVisibleMessageWindow,
+	INITIAL_VISIBLE_MESSAGE_COUNT,
+	VISIBLE_MESSAGE_BATCH_SIZE,
+} from "../chat-ui-state";
 import { useChatStore } from "../store";
 import type { ChatMessage } from "../types";
 import { ChatMessageItem } from "./chat-message-item";
@@ -28,6 +35,53 @@ export function ChatMessageList() {
 	const regenerateLastAssistantMessage = useChatStore(
 		(state) => state.regenerateLastAssistantMessage,
 	);
+	const [messageWindow, setMessageWindow] = useState<{
+		conversationId?: string;
+		visibleCount: number;
+	}>({
+		conversationId: activeConversationId,
+		visibleCount: INITIAL_VISIBLE_MESSAGE_COUNT,
+	});
+	const visibleMessageCount =
+		messageWindow.conversationId === activeConversationId
+			? messageWindow.visibleCount
+			: INITIAL_VISIBLE_MESSAGE_COUNT;
+	const {
+		hiddenCount,
+		messages: visibleMessages,
+		startIndex,
+	} = useMemo(
+		() => getVisibleMessageWindow(messages, visibleMessageCount),
+		[messages, visibleMessageCount],
+	);
+	const earlierMessageCount = Math.min(
+		hiddenCount,
+		VISIBLE_MESSAGE_BATCH_SIZE,
+	);
+
+	useEffect(() => {
+		setMessageWindow({
+			conversationId: activeConversationId,
+			visibleCount: INITIAL_VISIBLE_MESSAGE_COUNT,
+		});
+	}, [activeConversationId]);
+
+	const showEarlierMessages = () => {
+		setMessageWindow((currentWindow) => {
+			const currentVisibleCount =
+				currentWindow.conversationId === activeConversationId
+					? currentWindow.visibleCount
+					: INITIAL_VISIBLE_MESSAGE_COUNT;
+
+			return {
+				conversationId: activeConversationId,
+				visibleCount: Math.min(
+					messages.length,
+					currentVisibleCount + VISIBLE_MESSAGE_BATCH_SIZE,
+				),
+			};
+		});
+	};
 
 	if (isLoadingMessages) {
 		return (
@@ -53,9 +107,24 @@ export function ChatMessageList() {
 	return (
 		<Conversation className="bg-white">
 			<ConversationContent className="mx-auto w-full max-w-3xl gap-7 px-6 py-8">
-				{messages.map((message, index) => {
+				{hiddenCount > 0 && (
+					<div className="flex justify-center">
+						<Button
+							className="border-zinc-200 bg-white text-zinc-700 shadow-sm"
+							onClick={showEarlierMessages}
+							size="sm"
+							type="button"
+							variant="outline"
+						>
+							Show {earlierMessageCount} earlier{" "}
+							{earlierMessageCount === 1 ? "message" : "messages"}
+						</Button>
+					</div>
+				)}
+				{visibleMessages.map((message, index) => {
 					const isLastAssistantMessage =
-						message.role === "assistant" && index === messages.length - 1;
+						message.role === "assistant" &&
+						startIndex + index === messages.length - 1;
 
 					return (
 						<ChatMessageItem

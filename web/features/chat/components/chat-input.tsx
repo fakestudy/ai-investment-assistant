@@ -5,18 +5,30 @@ import { usePathname, useRouter } from "next/navigation";
 import { type KeyboardEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { isActiveConversationStreaming } from "../chat-ui-state";
 import { useChatStore } from "../store";
 
 export function ChatInput() {
 	const [draft, setDraft] = useState("");
+	const activeConversationId = useChatStore(
+		(state) => state.activeConversationId,
+	);
 	const isStreaming = useChatStore((state) => state.isStreaming);
+	const streamingConversationId = useChatStore(
+		(state) => state.streamingConversationId,
+	);
 	const sendMessage = useChatStore((state) => state.sendMessage);
 	const stopStreaming = useChatStore((state) => state.stopStreaming);
 	const pathname = usePathname();
 	const router = useRouter();
 
 	const trimmedDraft = draft.trim();
-	const canSend = trimmedDraft.length > 0 && !isStreaming;
+	const isCurrentConversationStreaming = isActiveConversationStreaming({
+		activeConversationId,
+		isStreaming,
+		streamingConversationId,
+	});
+	const canSend = trimmedDraft.length > 0 && !isCurrentConversationStreaming;
 
 	const submitMessage = () => {
 		if (!canSend) {
@@ -59,14 +71,14 @@ export function ChatInput() {
 						<Textarea
 							aria-label="Message"
 							className="max-h-52 min-h-12 resize-none border-0 bg-transparent px-3 py-3 text-[15px] text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0"
-							disabled={isStreaming}
+							disabled={isCurrentConversationStreaming}
 							onChange={(event) => setDraft(event.target.value)}
 							onKeyDown={handleKeyDown}
 							placeholder="Ask anything"
 							rows={1}
 							value={draft}
 						/>
-						{isStreaming ? (
+						{isCurrentConversationStreaming ? (
 							<Button
 								aria-label="Stop response"
 								className="mb-1 size-9 rounded-full bg-zinc-900 text-white hover:bg-zinc-700"

@@ -9,7 +9,7 @@ import {
 	ThumbsUpIcon,
 	XIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
 	Message,
 	MessageAction,
@@ -38,7 +38,7 @@ type ChatMessageItemProps = {
 
 type Feedback = "liked" | "disliked";
 
-export function ChatMessageItem({
+function ChatMessageItemComponent({
 	message,
 	canRegenerate = false,
 	onEditUserMessage,
@@ -219,3 +219,14 @@ export function ChatMessageItem({
 		</Message>
 	);
 }
+
+export const ChatMessageItem = memo(
+	ChatMessageItemComponent,
+	(previousProps, nextProps) =>
+		previousProps.message === nextProps.message &&
+		previousProps.canRegenerate === nextProps.canRegenerate &&
+		previousProps.onEditUserMessage === nextProps.onEditUserMessage &&
+		previousProps.onRegenerate === nextProps.onRegenerate,
+);
+
+ChatMessageItem.displayName = "ChatMessageItem";
