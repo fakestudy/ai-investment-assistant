@@ -1,4 +1,15 @@
 services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: investment-nginx
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      - ./infra/nginx/local.conf:/etc/nginx/conf.d/default.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   postgres:
     image: postgres:16-alpine
     container_name: investment-postgres

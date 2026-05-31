@@ -32,7 +32,11 @@ import { ToolInvocationCard } from "./tool-invocation-card";
 type ChatMessageItemProps = {
 	message: ChatMessage;
 	canRegenerate?: boolean;
-	onEditUserMessage: (messageId: string, content: string) => Promise<void>;
+	onEditUserMessage: (
+		messageId: string,
+		previousContent: string,
+		nextContent: string,
+	) => Promise<void>;
 	onRegenerate: () => Promise<void>;
 };
 
@@ -68,10 +72,10 @@ export function ChatMessageItem({
 		}
 
 		setIsSaving(true);
+		setIsEditing(false);
 
 		try {
-			await onEditUserMessage(message.id, nextContent);
-			setIsEditing(false);
+			await onEditUserMessage(message.id, message.content, nextContent);
 		} finally {
 			setIsSaving(false);
 		}
@@ -83,7 +87,7 @@ export function ChatMessageItem({
 			from={isUser ? "user" : "assistant"}
 		>
 			{isEditing ? (
-				<div className="w-full max-w-[min(42rem,75vw)] space-y-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+				<div className="w-full max-w-[min(63rem,75vw)] space-y-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
 					<Textarea
 						className="min-h-24 resize-none rounded-2xl border-zinc-200 bg-white text-sm"
 						onChange={(event) => setDraft(event.target.value)}
@@ -167,7 +171,10 @@ export function ChatMessageItem({
 						{isUser ? (
 							<MessageAction
 								label="Edit"
-								onClick={() => setIsEditing(true)}
+								onClick={() => {
+									setDraft(message.content);
+									setIsEditing(true);
+								}}
 								tooltip="Edit"
 							>
 								<PencilIcon className="size-4" />

@@ -215,10 +215,11 @@ if ! BACKEND_HTTP_PORT="$(backend_http_port "${BFF_HTTP_ADDR:-$(load_env_value B
   BACKEND_HTTP_PORT=""
 fi
 
-check_port 3000 "web/Next.js"       fail
+check_port 3001 "web/Next.js"       fail
 if [[ -n "$BACKEND_HTTP_PORT" ]]; then
   check_port "$BACKEND_HTTP_PORT" "backend/Gin" fail
 fi
+check_port 3000 "nginx/reverse proxy" fail
 check_port 5432 "postgres"          warn
 
 # ---------------- 5. 汇总 ----------------

@@ -41,7 +41,8 @@ type ChatState = {
 	regenerateLastAssistantMessage: () => Promise<void>;
 	editUserMessageAndRegenerate: (
 		messageId: string,
-		content: string,
+		previousContent: string,
+		nextContent: string,
 	) => Promise<void>;
 	clearError: () => void;
 };
@@ -569,18 +570,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		);
 	},
 
-	editUserMessageAndRegenerate: async (messageId, content) => {
+	editUserMessageAndRegenerate: async (
+		messageId,
+		previousContent,
+		nextContent,
+	) => {
 		const conversationId = get().activeConversationId;
-		const nextContent = content.trim();
+		const normalizedNextContent = nextContent.trim();
 
-		if (!conversationId || !nextContent) {
+		if (!conversationId || !normalizedNextContent) {
 			return;
 		}
 
 		set({ error: undefined });
 
+		const messages = get().messagesByConversationId[conversationId] ?? [];
+		const messageIndex = messages.findIndex(
+			(message) => message.id === messageId,
+		);
+
+		if (messageIndex === -1) {
+			return;
+		}
+
+		set((state) => ({
+			messagesByConversationId: {
+				...state.messagesByConversationId,
+				[conversationId]: (
+					state.messagesByConversationId[conversationId] ?? messages
+				).map((message) =>
+					message.id === messageId
+						? { ...message, content: normalizedNextContent }
+						: message,
+				),
+			},
+		}));
+
 		try {
-			const message = await editMessage(messageId, nextContent);
+			const message = await editMessage(messageId, normalizedNextContent);
 
 			set((state) => ({
 				messagesByConversationId: {
@@ -588,12 +615,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					[conversationId]: (
 						state.messagesByConversationId[conversationId] ?? []
 					)
-						.slice(
-							0,
-							(state.messagesByConversationId[conversationId] ?? []).findIndex(
-								(currentMessage) => currentMessage.id === messageId,
-							) + 1,
-						)
+						.slice(0, messageIndex + 1)
 						.map((currentMessage) =>
 							currentMessage.id === messageId ? message : currentMessage,
 						),
@@ -603,14 +625,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			await startStream(
 				{
 					conversationId,
-					message: nextContent,
+					message: normalizedNextContent,
 					parentMessageId: messageId,
 				},
 				set,
 				get,
 			);
 		} catch (error) {
-			set({ error: toChatError(error, "message") });
+			set((state) => ({
+				error: toChatError(error, "message"),
+				messagesByConversationId: {
+					...state.messagesByConversationId,
+					[conversationId]: (
+						state.messagesByConversationId[conversationId] ?? messages
+					).map((message) =>
+						message.id === messageId
+							? { ...message, content: previousContent }
+							: message,
+					),
+				},
+			}));
 		}
 	},
 

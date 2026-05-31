@@ -163,6 +163,14 @@ OUTPUT_FILE="$TMP_DIR/dev-start.out"
 run_dev_start "$TMP_DIR" ":9090" "success" "$OUTPUT_FILE"
 assert_contains "$OUTPUT_FILE" "backend  : http://localhost:9090" \
   "dev-start.sh must render :9090 as localhost URL"
+assert_contains "$OUTPUT_FILE" "本地入口已就绪" \
+  "dev-start.sh must print a prominent local entry banner"
+assert_contains "$OUTPUT_FILE" "AIA" \
+  "dev-start.sh must print the local app logo in the ready banner"
+assert_contains "$OUTPUT_FILE" "AI Investment Assistant" \
+  "dev-start.sh must print the product name in the ready banner"
+assert_contains "$OUTPUT_FILE" "http://localhost:3000" \
+  "dev-start.sh must print the nginx localhost entry URL"
 if run_dev_start "$TMP_DIR" ":9090" "fail" "$OUTPUT_FILE"; then
   echo "FAIL: dev-start.sh must fail when web process exits during startup" >&2
   exit 1
@@ -190,13 +198,35 @@ assert_not_contains "$REPO_ROOT/scripts/dev-start.sh" 'cfg.Port' \
   "dev-start.sh comments must not describe removed cfg.Port behavior"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'backend_http_url "${BFF_HTTP_ADDR:-}"' \
   "dev-start.sh must use shared backend URL formatter"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'docker compose up -d postgres nginx' \
+  "dev-start.sh must start nginx with postgres"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'show_startup_animation' \
+  "dev-start.sh must include a terminal startup animation"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'nohup pnpm dev >"$WEB_LOG" 2>&1 &' \
+  "dev-start.sh must use the web package dev script"
+assert_not_contains "$REPO_ROOT/scripts/dev-start.sh" 'pnpm dev -- --port 3001' \
+  "dev-start.sh must not override the web dev port"
+assert_contains "$REPO_ROOT/web/package.json" '"dev": "next dev --port 3001"' \
+  "web package dev script must default Next.js to port 3001"
 assert_backend_failure_exits
+assert_contains "$REPO_ROOT/scripts/dev-end.sh" 'docker compose stop nginx postgres' \
+  "dev-end.sh must stop nginx with postgres"
 assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'DEEPSEEK_TIMEOUT_SECONDS' \
   "check-dev.sh must check DEEPSEEK_TIMEOUT_SECONDS"
 assert_not_contains "$REPO_ROOT/scripts/check-dev.sh" 'HTTP_CLIENT_TIMEOUT_SECONDS' \
   "check-dev.sh must not check legacy HTTP_CLIENT_TIMEOUT_SECONDS"
 assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'backend_http_port' \
   "check-dev.sh must parse backend port from BFF_HTTP_ADDR"
+assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'check_port 3000 "nginx/reverse proxy" fail' \
+  "check-dev.sh must check nginx reverse proxy port"
+assert_contains "$REPO_ROOT/docker-compose.yml" 'image: nginx:1.27-alpine' \
+  "docker-compose.yml must define nginx service"
+assert_contains "$REPO_ROOT/docker-compose.yml" '"3000:80"' \
+  "docker-compose.yml must expose nginx on localhost port 3000"
+assert_contains "$REPO_ROOT/infra/nginx/local.conf" 'proxy_pass http://host.docker.internal:8081;' \
+  "nginx local config must proxy API requests to host backend"
+assert_contains "$REPO_ROOT/infra/nginx/local.conf" 'proxy_pass http://host.docker.internal:3001;' \
+  "nginx local config must proxy web requests to host frontend"
 assert_contains "$REPO_ROOT/Makefile" 'test-dev-config:' \
   "Makefile must expose test-dev-config target"
 assert_contains "$REPO_ROOT/Makefile" 'bash scripts/test-dev-config.sh' \

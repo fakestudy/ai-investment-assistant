@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 启动本地开发环境：postgres (docker) + backend (go) + web (pnpm)
+# 启动本地开发环境：postgres/nginx (docker) + backend (go) + web (pnpm)
 # 不再使用 backend / web 的 Docker 镜像，二者直接以脚本进程方式运行。
 
 set -u
@@ -22,15 +22,39 @@ WEB_LOG="$LOG_DIR/web.log"
 # ---- 输出辅助 ----
 if [[ -t 1 ]]; then
   C_RED=$'\033[31m'; C_GRN=$'\033[32m'; C_YLW=$'\033[33m'
-  C_BLU=$'\033[34m'; C_BLD=$'\033[1m'; C_RST=$'\033[0m'
+  C_BLU=$'\033[34m'; C_MAG=$'\033[35m'; C_CYN=$'\033[36m'
+  C_DIM=$'\033[2m'; C_BLD=$'\033[1m'; C_RST=$'\033[0m'
 else
-  C_RED=""; C_GRN=""; C_YLW=""; C_BLU=""; C_BLD=""; C_RST=""
+  C_RED=""; C_GRN=""; C_YLW=""; C_BLU=""; C_MAG=""; C_CYN=""
+  C_DIM=""; C_BLD=""; C_RST=""
 fi
 
 info()  { echo "${C_BLU}[dev-start]${C_RST} $*"; }
 ok()    { echo "${C_GRN}[dev-start]${C_RST} $*"; }
 warn()  { echo "${C_YLW}[dev-start]${C_RST} $*"; }
 error() { echo "${C_RED}[dev-start]${C_RST} $*" 1>&2; }
+
+show_startup_animation() {
+  [[ -t 1 ]] || return 0
+  local frames=("✦" "✧" "✶" "✷" "✹" "✸")
+  local frame
+  for frame in "${frames[@]}" "${frames[@]}"; do
+    printf "\r${C_MAG}%s${C_RST} ${C_BLD}AI Investment Assistant${C_RST} ${C_DIM}正在点亮本地入口...${C_RST}" "$frame"
+    sleep 0.07
+  done
+  printf "\r%80s\r" ""
+}
+
+print_ready_banner() {
+  show_startup_animation
+  echo "${C_BLD}${C_CYN}╭────────────────────────────────────────────────────────╮${C_RST}"
+  echo "${C_BLD}${C_CYN}│${C_RST} ${C_MAG}✦ AIA ✦${C_RST}  ${C_BLD}AI Investment Assistant${C_RST}                  ${C_BLD}${C_CYN}│${C_RST}"
+  echo "${C_BLD}${C_CYN}│${C_RST} ${C_GRN}本地入口已就绪${C_RST}                                      ${C_BLD}${C_CYN}│${C_RST}"
+  echo "${C_BLD}${C_CYN}│${C_RST}                                                        ${C_BLD}${C_CYN}│${C_RST}"
+  echo "${C_BLD}${C_CYN}│${C_RST}  ${C_BLD}访问 / 登录${C_RST}  ${C_GRN}http://localhost:3000${C_RST}                 ${C_BLD}${C_CYN}│${C_RST}"
+  echo "${C_BLD}${C_CYN}│${C_RST}  ${C_DIM}Nginx 3000 -> Web 3001 -> Backend 8081${C_RST}          ${C_BLD}${C_CYN}│${C_RST}"
+  echo "${C_BLD}${C_CYN}╰────────────────────────────────────────────────────────╯${C_RST}"
+}
 
 # ---- 进程辅助 ----
 is_running() {
@@ -63,10 +87,10 @@ if ! BACKEND_HTTP_URL="$(backend_http_url "${BFF_HTTP_ADDR:-}")"; then
   exit 1
 fi
 
-# ---- 2. 启动 postgres (docker compose) ----
-info "启动 postgres 容器..."
-if ! docker compose up -d postgres >/dev/null; then
-  error "docker compose up postgres 失败"
+# ---- 2. 启动 docker compose 服务 ----
+info "启动 postgres 与 nginx 容器..."
+if ! docker compose up -d postgres nginx >/dev/null; then
+  error "docker compose up postgres nginx 失败"
   exit 1
 fi
 
@@ -131,9 +155,14 @@ fi
 
 echo ""
 ok "开发环境已启动"
+echo ""
+print_ready_banner
+echo ""
+echo "服务明细:"
 echo "  - postgres : docker container investment-postgres (5432)"
+echo "  - nginx    : http://localhost:3000"
 echo "  - backend  : $BACKEND_HTTP_URL  (log: $BACKEND_LOG)"
-echo "  - web      : http://localhost:3000                    (log: $WEB_LOG)"
+echo "  - web      : http://localhost:3001                    (log: $WEB_LOG)"
 echo ""
 echo "查看日志: tail -f $BACKEND_LOG | tail -f $WEB_LOG"
 echo "停止环境: make dev-end"
