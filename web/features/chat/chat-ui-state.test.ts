@@ -3,7 +3,7 @@ import test from "node:test";
 import {
 	getVisibleMessageWindow,
 	isActiveConversationStreaming,
-} from "./chat-ui-state.ts";
+} from "./chat-ui-state";
 
 test("isActiveConversationStreaming only locks the active conversation", () => {
 	assert.equal(
@@ -35,7 +35,10 @@ test("isActiveConversationStreaming only locks the active conversation", () => {
 });
 
 test("getVisibleMessageWindow returns the latest bounded message slice", () => {
-	const messages = Array.from({ length: 120 }, (_, index) => `message-${index}`);
+	const messages = Array.from(
+		{ length: 120 },
+		(_, index) => `message-${index}`,
+	);
 
 	assert.deepEqual(getVisibleMessageWindow(messages, 50), {
 		hiddenCount: 70,

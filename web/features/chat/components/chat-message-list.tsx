@@ -54,10 +54,7 @@ export function ChatMessageList() {
 		() => getVisibleMessageWindow(messages, visibleMessageCount),
 		[messages, visibleMessageCount],
 	);
-	const earlierMessageCount = Math.min(
-		hiddenCount,
-		VISIBLE_MESSAGE_BATCH_SIZE,
-	);
+	const earlierMessageCount = Math.min(hiddenCount, VISIBLE_MESSAGE_BATCH_SIZE);
 
 	useEffect(() => {
 		setMessageWindow({
