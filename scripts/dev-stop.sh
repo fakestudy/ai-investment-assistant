@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 停止本地开发环境：web (pnpm) + backend (go) + postgres/nginx (docker)
+# 停止本地开发环境：web (pnpm) + backend (go) + postgres/nginx/pgweb (docker)
 
 set -u
 
@@ -70,11 +70,11 @@ stop_pid_file "web" "$WEB_PID_FILE"
 stop_pid_file "backend" "$BACKEND_PID_FILE"
 
 # 停止 docker compose 服务
-info "停止 postgres 与 nginx 容器..."
-if docker compose stop nginx postgres >/dev/null 2>&1; then
-  ok "postgres 与 nginx 已停止"
+info "停止 postgres、nginx 与 pgweb 容器..."
+if docker compose stop nginx postgres pgweb >/dev/null 2>&1; then
+  ok "postgres、nginx 与 pgweb 已停止"
 else
-  warn "docker compose stop nginx postgres 失败 (可能未在运行)"
+  warn "docker compose stop nginx postgres pgweb 失败 (可能未在运行)"
 fi
 
 ok "开发环境已停止"

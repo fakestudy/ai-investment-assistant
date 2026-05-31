@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 启动本地开发环境：postgres/nginx (docker) + backend (go) + web (pnpm)
+# 启动本地开发环境：postgres/nginx/pgweb (docker) + backend (go) + web (pnpm)
 # 不再使用 backend / web 的 Docker 镜像，二者直接以脚本进程方式运行。
 
 set -u
@@ -88,9 +88,9 @@ if ! BACKEND_HTTP_URL="$(backend_http_url "${BFF_HTTP_ADDR:-}")"; then
 fi
 
 # ---- 2. 启动 docker compose 服务 ----
-info "启动 postgres 与 nginx 容器..."
-if ! docker compose up -d postgres nginx >/dev/null; then
-  error "docker compose up postgres nginx 失败"
+info "启动 postgres、nginx 与 pgweb 容器..."
+if ! docker compose up -d --remove-orphans postgres nginx pgweb >/dev/null; then
+  error "docker compose up --remove-orphans postgres nginx pgweb 失败"
   exit 1
 fi
 
@@ -160,6 +160,7 @@ print_ready_banner
 echo ""
 echo "服务明细:"
 echo "  - postgres : docker container investment-postgres (5432)"
+echo "  - pgweb    : http://localhost:8082"
 echo "  - nginx    : http://localhost:3000"
 echo "  - backend  : $BACKEND_HTTP_URL  (log: $BACKEND_LOG)"
 echo "  - web      : http://localhost:3001                    (log: $WEB_LOG)"

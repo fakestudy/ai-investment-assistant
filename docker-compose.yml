@@ -28,5 +28,19 @@ services:
       timeout: 3s
       retries: 10
 
+  pgweb:
+    image: sosedoff/pgweb:latest
+    container_name: investment-pgweb
+    restart: unless-stopped
+    ports:
+      - "8082:8081"
+    command:
+      - "--bind=0.0.0.0"
+      - "--listen=8081"
+      - "--url=postgres://investment:investment@postgres:5432/investment?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres-data:
