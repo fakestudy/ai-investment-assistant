@@ -17,9 +17,9 @@ else
   C_RED=""; C_GRN=""; C_YLW=""; C_BLU=""; C_RST=""
 fi
 
-info()  { echo "${C_BLU}[dev-end]${C_RST} $*"; }
-ok()    { echo "${C_GRN}[dev-end]${C_RST} $*"; }
-warn()  { echo "${C_YLW}[dev-end]${C_RST} $*"; }
+info()  { echo "${C_BLU}[dev-stop]${C_RST} $*"; }
+ok()    { echo "${C_GRN}[dev-stop]${C_RST} $*"; }
+warn()  { echo "${C_YLW}[dev-stop]${C_RST} $*"; }
 
 # 终止 pid 文件指向的进程及其子进程
 stop_pid_file() {

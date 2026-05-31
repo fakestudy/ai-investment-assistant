@@ -67,10 +67,10 @@ make check-dev
 
 ```bash
 make dev-start   # 启动本地开发环境 (postgres + nginx + backend + web)
-make dev-end     # 停止本地开发环境
+make dev-stop    # 停止本地开发环境
 ```
 
-底层分别由 [scripts/dev-start.sh](file:///Users/bytedance/Desktop/ai-investment-assistant/scripts/dev-start.sh) 与 [scripts/dev-end.sh](file:///Users/bytedance/Desktop/ai-investment-assistant/scripts/dev-end.sh) 实现。
+底层分别由 [scripts/dev-start.sh](file:///Users/bytedance/Desktop/ai-investment-assistant/scripts/dev-start.sh) 与 [scripts/dev-stop.sh](file:///Users/bytedance/Desktop/ai-investment-assistant/scripts/dev-stop.sh) 实现。
 
 启动后默认端口：
 
@@ -85,7 +85,7 @@ make dev-end     # 停止本地开发环境
 make help          # 查看 Makefile 提供的命令
 make check-dev     # 开发环境体检
 make dev-start     # 启动本地开发环境
-make dev-end       # 停止本地开发环境
+make dev-stop      # 停止本地开发环境
 mise install       # 同步 mise.toml 锁定的工具链版本
 mise run doctor    # 打印当前 node / pnpm / go / python / buf 版本
 ```

@@ -209,8 +209,8 @@ assert_not_contains "$REPO_ROOT/scripts/dev-start.sh" 'pnpm dev -- --port 3001' 
 assert_contains "$REPO_ROOT/web/package.json" '"dev": "next dev --port 3001"' \
   "web package dev script must default Next.js to port 3001"
 assert_backend_failure_exits
-assert_contains "$REPO_ROOT/scripts/dev-end.sh" 'docker compose stop nginx postgres' \
-  "dev-end.sh must stop nginx with postgres"
+assert_contains "$REPO_ROOT/scripts/dev-stop.sh" 'docker compose stop nginx postgres' \
+  "dev-stop.sh must stop nginx with postgres"
 assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'DEEPSEEK_TIMEOUT_SECONDS' \
   "check-dev.sh must check DEEPSEEK_TIMEOUT_SECONDS"
 assert_not_contains "$REPO_ROOT/scripts/check-dev.sh" 'HTTP_CLIENT_TIMEOUT_SECONDS' \
