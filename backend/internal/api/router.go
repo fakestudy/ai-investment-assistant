@@ -41,6 +41,8 @@ func NewRouter(conversations *conversation.Service, chatServices ...*chat.Servic
 	api.GET("/conversations/:conversationId/messages", handler.listMessages)
 	api.PATCH("/messages/:messageId", handler.editMessage)
 	api.POST("/chat/stream", handler.streamChat)
+	api.GET("/chat/streams/:messageId", handler.resumeChatStream)
+	api.POST("/chat/streams/:messageId/cancel", handler.cancelChatStream)
 
 	return router
 }
@@ -181,6 +183,32 @@ func (r *Router) streamChat(c *gin.Context) {
 	}
 
 	writeSSEEvents(c.Writer, c.Request, events)
+}
+
+func (r *Router) resumeChatStream(c *gin.Context) {
+	events, err := r.chats.ResumeStream(c.Request.Context(), c.Param("messageId"))
+	if err != nil {
+		if chat.IsValidation(err) {
+			respondBadRequest(c, chat.ValidationMessage(err))
+			return
+		}
+		respondError(c, err)
+		return
+	}
+
+	writeSSEEvents(c.Writer, c.Request, events)
+}
+
+func (r *Router) cancelChatStream(c *gin.Context) {
+	if err := r.chats.CancelStream(c.Request.Context(), c.Param("messageId")); err != nil {
+		if chat.IsValidation(err) {
+			respondBadRequest(c, chat.ValidationMessage(err))
+			return
+		}
+		respondError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (r *Router) conversationExists(c *gin.Context, conversationID string) (bool, error) {

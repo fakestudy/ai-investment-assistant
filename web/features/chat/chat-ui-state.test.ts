@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	getLatestStreamingAssistantMessageId,
+	getResumableStreamingMessageId,
 	getVisibleMessageWindow,
 	isActiveConversationStreaming,
+	resetStreamCreatedMessage,
+	resolveLoadedConversationMessages,
 } from "./chat-ui-state";
 
 test("isActiveConversationStreaming only locks the active conversation", () => {
@@ -57,4 +61,97 @@ test("getVisibleMessageWindow keeps all messages when the window covers them", (
 		startIndex: 0,
 		totalCount: 20,
 	});
+});
+
+test("resolveLoadedConversationMessages keeps existing streamed replay over stale loads", () => {
+	const existingMessages = [
+		{ id: "assistant-1", content: "first second", status: "streaming" },
+	];
+	const loadedMessages = [
+		{ id: "assistant-1", content: "", status: "streaming" },
+	];
+
+	assert.equal(
+		resolveLoadedConversationMessages({
+			existingMessages,
+			loadedMessages,
+		}),
+		existingMessages,
+	);
+});
+
+test("getLatestStreamingAssistantMessageId returns the newest streaming assistant", () => {
+	assert.equal(
+		getLatestStreamingAssistantMessageId([
+			{ id: "user-1", role: "user", status: "done" },
+			{ id: "assistant-old", role: "assistant", status: "streaming" },
+			{ id: "assistant-done", role: "assistant", status: "done" },
+			{ id: "assistant-new", role: "assistant", status: "streaming" },
+		]),
+		"assistant-new",
+	);
+});
+
+test("getLatestStreamingAssistantMessageId ignores user and done messages", () => {
+	assert.equal(
+		getLatestStreamingAssistantMessageId([
+			{ id: "user-streaming", role: "user", status: "streaming" },
+			{ id: "assistant-done", role: "assistant", status: "done" },
+			{ id: "assistant-error", role: "assistant", status: "error" },
+		]),
+		undefined,
+	);
+});
+
+test("resetStreamCreatedMessage resets streamed text before full replay", () => {
+	assert.deepEqual(
+		resetStreamCreatedMessage(
+			{
+				id: "assistant-1",
+				conversationId: "conversation-1",
+				role: "assistant",
+				content: "already shown",
+				reasoning: "reasoning shown",
+				status: "streaming",
+				createdAt: "2026-01-01T00:00:00.000Z",
+			},
+			{
+				id: "assistant-1",
+				conversationId: "conversation-1",
+				role: "assistant",
+				content: "",
+				status: "streaming",
+				createdAt: "2026-01-01T00:00:00.000Z",
+			},
+		),
+		{
+			id: "assistant-1",
+			conversationId: "conversation-1",
+			role: "assistant",
+			content: "",
+			status: "streaming",
+			createdAt: "2026-01-01T00:00:00.000Z",
+		},
+	);
+});
+
+test("getResumableStreamingMessageId resumes cached streaming messages", () => {
+	assert.equal(
+		getResumableStreamingMessageId({
+			messages: [{ id: "assistant-1", role: "assistant", status: "streaming" }],
+			isStreaming: false,
+		}),
+		"assistant-1",
+	);
+});
+
+test("getResumableStreamingMessageId skips the currently connected stream", () => {
+	assert.equal(
+		getResumableStreamingMessageId({
+			messages: [{ id: "assistant-1", role: "assistant", status: "streaming" }],
+			isStreaming: true,
+			streamingMessageId: "assistant-1",
+		}),
+		undefined,
+	);
 });

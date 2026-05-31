@@ -1,19 +1,26 @@
 import { create } from "zustand";
 import {
+	cancelChatStream,
 	createConversation,
 	deleteConversation,
 	editMessage,
 	listConversations,
 	listMessages,
 	renameConversation,
+	resumeChatStream,
 	streamChat,
 } from "./api";
+import {
+	getLatestStreamingAssistantMessageId,
+	getResumableStreamingMessageId,
+	resetStreamCreatedMessage,
+	resolveLoadedConversationMessages,
+} from "./chat-ui-state";
 import type {
 	ChatError,
 	ChatMessage,
 	ChatStreamEvent,
 	Conversation,
-	StreamChatRequest,
 	ToolInvocation,
 } from "./types";
 
@@ -25,6 +32,7 @@ type ChatState = {
 	isLoadingMessages: boolean;
 	isStreaming: boolean;
 	streamingConversationId?: string;
+	streamingMessageId?: string;
 	error?: ChatError;
 	abortController?: AbortController;
 	loadConversations: () => Promise<void>;
@@ -73,7 +81,9 @@ const upsertMessage = (
 	}
 
 	return messages.map((message, index) =>
-		index === messageIndex ? { ...message, ...nextMessage } : message,
+		index === messageIndex
+			? resetStreamCreatedMessage(message, nextMessage)
+			: message,
 	);
 };
 
@@ -152,6 +162,7 @@ const reduceStreamEvent = (
 		const nextState: Partial<ChatState> = {
 			isStreaming: false,
 			streamingConversationId: undefined,
+			streamingMessageId: undefined,
 			abortController: undefined,
 			error: { message: event.message, scope: "stream" },
 		};
@@ -186,6 +197,7 @@ const reduceStreamEvent = (
 
 	if (event.type === "message_created") {
 		return {
+			streamingMessageId: event.message.id,
 			messagesByConversationId: {
 				...state.messagesByConversationId,
 				[conversationId]: upsertMessage(messages, event.message),
@@ -250,6 +262,7 @@ const reduceStreamEvent = (
 	return {
 		isStreaming: false,
 		streamingConversationId: undefined,
+		streamingMessageId: undefined,
 		abortController: undefined,
 		messagesByConversationId: {
 			...state.messagesByConversationId,
@@ -261,49 +274,104 @@ const reduceStreamEvent = (
 	};
 };
 
+type StartStreamInput = {
+	conversationId: string;
+	initialMessageId?: string;
+	connect: (
+		signal: AbortSignal,
+		onEvent: (event: ChatStreamEvent) => void,
+	) => Promise<void>;
+};
+
 const startStream = async (
-	request: StreamChatRequest,
+	input: StartStreamInput,
 	set: (
 		partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
 	) => void,
 	get: () => ChatState,
 ) => {
-	get().abortController?.abort();
+	const currentState = get();
+	if (
+		input.initialMessageId &&
+		currentState.isStreaming &&
+		currentState.streamingMessageId === input.initialMessageId
+	) {
+		return;
+	}
+
+	currentState.abortController?.abort();
 
 	const abortController = new AbortController();
 
 	set({
 		isStreaming: true,
-		streamingConversationId: request.conversationId,
+		streamingConversationId: input.conversationId,
+		streamingMessageId: input.initialMessageId,
 		abortController,
 		error: undefined,
 	});
 
 	try {
-		await streamChat(request, {
-			signal: abortController.signal,
-			onEvent: (event) => {
-				set((state) => reduceStreamEvent(state, event, request.conversationId));
-			},
+		await input.connect(abortController.signal, (event) => {
+			set((state) => reduceStreamEvent(state, event, input.conversationId));
 		});
 	} catch (error) {
 		if (!abortController.signal.aborted) {
-			set({
+			const failedMessageId =
+				get().streamingMessageId ?? input.initialMessageId;
+			set((state) => ({
 				isStreaming: false,
 				streamingConversationId: undefined,
+				streamingMessageId: undefined,
 				abortController: undefined,
 				error: toChatError(error, "stream"),
-			});
+				messagesByConversationId: failedMessageId
+					? {
+							...state.messagesByConversationId,
+							[input.conversationId]: updateMessage(
+								state.messagesByConversationId[input.conversationId] ?? [],
+								failedMessageId,
+								(message) => ({ ...message, status: "error" }),
+							),
+						}
+					: state.messagesByConversationId,
+			}));
 		}
 	} finally {
 		if (get().abortController === abortController) {
 			set({
 				isStreaming: false,
 				streamingConversationId: undefined,
+				streamingMessageId: undefined,
 				abortController: undefined,
 			});
 		}
 	}
+};
+
+const resumeStreamingMessage = (
+	conversationId: string,
+	messages: ChatMessage[],
+	set: (
+		partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
+	) => void,
+	get: () => ChatState,
+) => {
+	const messageId = getLatestStreamingAssistantMessageId(messages);
+	if (!messageId) {
+		return;
+	}
+
+	void startStream(
+		{
+			conversationId,
+			initialMessageId: messageId,
+			connect: (signal, onEvent) =>
+				resumeChatStream(messageId, { signal, onEvent }),
+		},
+		set,
+		get,
+	);
 };
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -331,10 +399,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				activeConversationId,
 				isLoadingConversations: false,
 			});
-
-			if (activeConversationId) {
-				await get().selectConversation(activeConversationId);
-			}
 		} catch (error) {
 			set({
 				isLoadingConversations: false,
@@ -373,7 +437,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	selectConversation: async (conversationId) => {
 		set({ activeConversationId: conversationId, error: undefined });
 
-		if (get().messagesByConversationId[conversationId]) {
+		const cachedMessages = get().messagesByConversationId[conversationId];
+		if (cachedMessages) {
+			const resumableMessageId = getResumableStreamingMessageId({
+				messages: cachedMessages,
+				isStreaming: get().isStreaming,
+				streamingMessageId: get().streamingMessageId,
+			});
+			if (resumableMessageId) {
+				resumeStreamingMessage(conversationId, cachedMessages, set, get);
+			}
 			return;
 		}
 
@@ -385,10 +458,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			set((state) => ({
 				messagesByConversationId: {
 					...state.messagesByConversationId,
-					[conversationId]: messages,
+					[conversationId]: resolveLoadedConversationMessages({
+						existingMessages: state.messagesByConversationId[conversationId],
+						loadedMessages: messages,
+					}),
 				},
 				isLoadingMessages: false,
 			}));
+			resumeStreamingMessage(conversationId, messages, set, get);
 		} catch (error) {
 			set({
 				isLoadingMessages: false,
@@ -430,6 +507,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 		try {
 			if (get().streamingConversationId === conversationId) {
+				const { streamingMessageId } = get();
+				if (streamingMessageId) {
+					void cancelChatStream(streamingMessageId);
+				}
 				get().abortController?.abort();
 			}
 
@@ -456,6 +537,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 						state.streamingConversationId === conversationId
 							? undefined
 							: state.streamingConversationId,
+					streamingMessageId:
+						state.streamingConversationId === conversationId
+							? undefined
+							: state.streamingMessageId,
 					abortController:
 						state.streamingConversationId === conversationId
 							? undefined
@@ -515,17 +600,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			},
 		}));
 
-		void startStream({ conversationId, message }, set, get);
+		void startStream(
+			{
+				conversationId,
+				connect: (signal, onEvent) =>
+					streamChat({ conversationId, message }, { signal, onEvent }),
+			},
+			set,
+			get,
+		);
 		return conversationId;
 	},
 
 	stopStreaming: () => {
-		const { abortController, streamingConversationId } = get();
+		const { abortController, streamingConversationId, streamingMessageId } =
+			get();
+		if (streamingMessageId) {
+			void cancelChatStream(streamingMessageId);
+		}
 		abortController?.abort();
 
 		set((state) => ({
 			isStreaming: false,
 			streamingConversationId: undefined,
+			streamingMessageId: undefined,
 			abortController: undefined,
 			messagesByConversationId: streamingConversationId
 				? {
@@ -562,8 +660,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		await startStream(
 			{
 				conversationId,
-				message: "",
-				regenerateFromMessageId: lastAssistantMessage.id,
+				connect: (signal, onEvent) =>
+					streamChat(
+						{
+							conversationId,
+							message: "",
+							regenerateFromMessageId: lastAssistantMessage.id,
+						},
+						{ signal, onEvent },
+					),
 			},
 			set,
 			get,
@@ -625,8 +730,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			await startStream(
 				{
 					conversationId,
-					message: normalizedNextContent,
-					parentMessageId: messageId,
+					connect: (signal, onEvent) =>
+						streamChat(
+							{
+								conversationId,
+								message: normalizedNextContent,
+								parentMessageId: messageId,
+							},
+							{ signal, onEvent },
+						),
 				},
 				set,
 				get,

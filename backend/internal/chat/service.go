@@ -18,6 +18,7 @@ import (
 type Service struct {
 	conversations *conversation.Service
 	agent         Agent
+	streams       *streamManager
 }
 
 type ValidationError struct {
@@ -36,6 +37,7 @@ func NewService(conversations *conversation.Service, agent Agent) *Service {
 	return &Service{
 		conversations: conversations,
 		agent:         agent,
+		streams:       newStreamManager(),
 	}
 }
 
@@ -78,9 +80,26 @@ func (s *Service) Stream(ctx context.Context, request StreamChatRequest) (<-chan
 		return nil, err
 	}
 
-	output := make(chan StreamEvent)
-	go s.runStream(ctx, conversationID, prompt, agentMessages, assistant, output)
-	return output, nil
+	streamCtx, cancel := context.WithCancel(context.Background())
+	stream := s.streams.start(assistant.ID, cancel)
+	go s.runStream(streamCtx, conversationID, prompt, agentMessages, assistant, stream)
+	return s.streams.subscribe(ctx, assistant.ID)
+}
+
+func (s *Service) ResumeStream(ctx context.Context, assistantMessageID string) (<-chan StreamEvent, error) {
+	messageID := strings.TrimSpace(assistantMessageID)
+	if messageID == "" {
+		return nil, ValidationError{Message: "messageId is required"}
+	}
+	return s.streams.subscribe(ctx, messageID)
+}
+
+func (s *Service) CancelStream(ctx context.Context, assistantMessageID string) error {
+	messageID := strings.TrimSpace(assistantMessageID)
+	if messageID == "" {
+		return ValidationError{Message: "messageId is required"}
+	}
+	return s.streams.cancel(messageID)
 }
 
 func (s *Service) resolvePrompt(ctx context.Context, conversationID string, messageText string, request StreamChatRequest) (string, bool, string, error) {
@@ -179,13 +198,14 @@ func (s *Service) agentMessages(ctx context.Context, conversationID string, thro
 	return history, nil
 }
 
-func (s *Service) runStream(ctx context.Context, conversationID string, prompt string, agentMessages []AgentMessage, assistant conversation.ChatMessage, output chan<- StreamEvent) {
-	defer close(output)
+func (s *Service) runStream(ctx context.Context, conversationID string, prompt string, agentMessages []AgentMessage, assistant conversation.ChatMessage, stream *activeStream) {
+	defer s.streams.finish(assistant.ID, stream)
 
-	if !sendEvent(ctx, output, StreamEvent{Type: "message_created", Message: &assistant}) {
+	if ctx.Err() != nil {
 		s.finalizeCanceled(ctx, assistant.ID, "", "")
 		return
 	}
+	stream.publish(StreamEvent{Type: "message_created", Message: &assistant})
 
 	agentEvents, agentErrors := s.agent.Stream(ctx, agentMessages)
 	var content strings.Builder
@@ -195,11 +215,17 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 		select {
 		case <-ctx.Done():
 			s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
+			stream.publish(StreamEvent{Type: "done", MessageID: assistant.ID})
 			return
 		case err, ok := <-agentErrors:
 			if ok && err != nil {
+				if ctx.Err() != nil {
+					s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
+					stream.publish(StreamEvent{Type: "done", MessageID: assistant.ID})
+					return
+				}
 				s.finalizeError(ctx, assistant.ID, content.String(), reasoning.String(), err)
-				_ = sendEvent(ctx, output, StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
+				stream.publish(StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
 				return
 			}
 			if !ok {
@@ -210,8 +236,9 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 				agentEvents = nil
 				continue
 			}
-			if !s.handleAgentEvent(ctx, output, assistant.ID, event, &content, &reasoning, toolInvocations) {
+			if !s.handleAgentEvent(ctx, stream, assistant.ID, event, &content, &reasoning, toolInvocations) {
 				s.finalizeCanceled(ctx, assistant.ID, content.String(), reasoning.String())
+				stream.publish(StreamEvent{Type: "done", MessageID: assistant.ID})
 				return
 			}
 		}
@@ -222,24 +249,24 @@ func (s *Service) runStream(ctx context.Context, conversationID string, prompt s
 		Reasoning: reasoning.String(),
 		Status:    "done",
 	}); err != nil {
-		_ = sendEvent(ctx, output, StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
+		stream.publish(StreamEvent{Type: "error", MessageID: assistant.ID, Text: err.Error()})
 		return
 	}
 
 	if title, ok := s.renameDefaultConversation(context.WithoutCancel(ctx), conversationID, prompt); ok {
-		if !sendEvent(ctx, output, StreamEvent{Type: "title", ConversationID: conversationID, Title: title}) {
-			return
-		}
+		stream.publish(StreamEvent{Type: "title", ConversationID: conversationID, Title: title})
 	}
-	_ = sendEvent(ctx, output, StreamEvent{Type: "done", MessageID: assistant.ID})
+	stream.publish(StreamEvent{Type: "done", MessageID: assistant.ID})
 }
 
-func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEvent, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder, toolInvocations map[string]ToolInvocation) bool {
+func (s *Service) handleAgentEvent(ctx context.Context, stream *activeStream, assistantID string, event AgentEvent, content *strings.Builder, reasoning *strings.Builder, toolInvocations map[string]ToolInvocation) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
 	switch event.Kind {
 	case "reasoning":
-		if !sendEvent(ctx, output, StreamEvent{Type: "reasoning", MessageID: assistantID, Text: event.Text}) {
-			return false
-		}
+		stream.publish(StreamEvent{Type: "reasoning", MessageID: assistantID, Text: event.Text})
 		reasoning.WriteString(event.Text)
 		return true
 	case "tool_call":
@@ -256,7 +283,8 @@ func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEven
 			invocation = persisted
 		}
 		toolInvocations[toolInvocationKey(event)] = invocation
-		return sendEvent(ctx, output, StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: &invocation})
+		stream.publish(StreamEvent{Type: "tool_call", MessageID: assistantID, Invocation: &invocation})
+		return true
 	case "tool_result":
 		status := "completed"
 		if event.ToolError != "" {
@@ -286,11 +314,10 @@ func (s *Service) handleAgentEvent(ctx context.Context, output chan<- StreamEven
 		}); err == nil {
 			invocation = persisted
 		}
-		return sendEvent(ctx, output, StreamEvent{Type: "tool_result", MessageID: assistantID, Invocation: &invocation})
+		stream.publish(StreamEvent{Type: "tool_result", MessageID: assistantID, Invocation: &invocation})
+		return true
 	default:
-		if !sendEvent(ctx, output, StreamEvent{Type: "delta", MessageID: assistantID, Text: event.Text}) {
-			return false
-		}
+		stream.publish(StreamEvent{Type: "delta", MessageID: assistantID, Text: event.Text})
 		content.WriteString(event.Text)
 		return true
 	}
@@ -373,18 +400,6 @@ func trimTitle(prompt string) string {
 	}
 	runes := []rune(title)
 	return string(runes[:maxRunes])
-}
-
-func sendEvent(ctx context.Context, output chan<- StreamEvent, event StreamEvent) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	select {
-	case <-ctx.Done():
-		return false
-	case output <- event:
-		return true
-	}
 }
 
 func IsValidation(err error) bool {
