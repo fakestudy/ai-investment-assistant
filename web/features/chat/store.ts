@@ -32,7 +32,10 @@ type ChatState = {
 	clearActiveConversation: () => void;
 	selectConversation: (conversationId: string) => Promise<void>;
 	renameActiveConversation: (title: string) => Promise<void>;
-	deleteActiveConversation: () => Promise<void>;
+	deleteActiveConversation: () => Promise<{
+		deleted: boolean;
+		nextConversationId?: string;
+	}>;
 	sendMessage: (content: string) => Promise<string | undefined>;
 	stopStreaming: () => void;
 	regenerateLastAssistantMessage: () => Promise<void>;
@@ -419,7 +422,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const conversationId = get().activeConversationId;
 
 		if (!conversationId) {
-			return;
+			return { deleted: false };
 		}
 
 		set({ error: undefined });
@@ -464,8 +467,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			if (nextConversationId) {
 				await get().selectConversation(nextConversationId);
 			}
+
+			return { deleted: true, nextConversationId };
 		} catch (error) {
 			set({ error: toChatError(error, "conversation") });
+			return { deleted: false };
 		}
 	},
 
