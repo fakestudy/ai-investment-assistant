@@ -8,6 +8,10 @@
 4. 输出说重点，砍掉一切不改变决策的信息。
 
 
+## 项目规范
+
+开发约定统一维护在 `docs/conventions.md`，涉及开发规范、代码组织或质量约束时按需引用。
+
 ## Skills 目录规范
 
 新增的 skills 统一放在项目根目录的 `skills/` 下；如果需要适配其他 code agent（如 Trae、Codex 等），则通过软链指向 `skills/`，不要维护多份 skills 副本。
