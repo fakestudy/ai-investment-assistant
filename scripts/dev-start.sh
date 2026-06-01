@@ -47,13 +47,46 @@ show_startup_animation() {
 
 print_ready_banner() {
   show_startup_animation
-  echo "${C_BLD}${C_CYN}╭────────────────────────────────────────────────────────╮${C_RST}"
-  echo "${C_BLD}${C_CYN}│${C_RST} ${C_MAG}✦ AIA ✦${C_RST}  ${C_BLD}AI Investment Assistant${C_RST}                  ${C_BLD}${C_CYN}│${C_RST}"
-  echo "${C_BLD}${C_CYN}│${C_RST} ${C_GRN}本地入口已就绪${C_RST}                                      ${C_BLD}${C_CYN}│${C_RST}"
-  echo "${C_BLD}${C_CYN}│${C_RST}                                                        ${C_BLD}${C_CYN}│${C_RST}"
-  echo "${C_BLD}${C_CYN}│${C_RST}  ${C_BLD}访问 / 登录${C_RST}  ${C_GRN}http://localhost:3000${C_RST}                 ${C_BLD}${C_CYN}│${C_RST}"
-  echo "${C_BLD}${C_CYN}│${C_RST}  ${C_DIM}Nginx 3000 -> Web 3001 -> Backend 8081${C_RST}          ${C_BLD}${C_CYN}│${C_RST}"
-  echo "${C_BLD}${C_CYN}╰────────────────────────────────────────────────────────╯${C_RST}"
+  local -a plain_lines=(
+    "✦ AIA ✦  AI Investment Assistant"
+    "本地入口已就绪"
+    ""
+    "  访问 / 登录  http://localhost:3000"
+    "  Nginx 3000 -> Web 3001 -> Backend 8081"
+    ""
+    "服务明细:"
+    "  - postgres : docker container investment-postgres (5432)"
+    "  - pgweb    : http://localhost:8082"
+    "  - nginx    : http://localhost:3000"
+    "  - backend  : $BACKEND_HTTP_URL  (log: $BACKEND_LOG)"
+    "  - web      : http://localhost:3001  (log: $WEB_LOG)"
+  )
+  local -a styled_lines=(
+    "${C_MAG}✦ AIA ✦${C_RST}  ${C_BLD}AI Investment Assistant${C_RST}"
+    "${C_GRN}本地入口已就绪${C_RST}"
+    ""
+    "  ${C_BLD}访问 / 登录${C_RST}  ${C_GRN}http://localhost:3000${C_RST}"
+    "  ${C_DIM}Nginx 3000 -> Web 3001 -> Backend 8081${C_RST}"
+    ""
+    "${C_BLD}服务明细:${C_RST}"
+    "  - postgres : docker container investment-postgres (5432)"
+    "  - pgweb    : http://localhost:8082"
+    "  - nginx    : http://localhost:3000"
+    "  - backend  : $BACKEND_HTTP_URL  ${C_DIM}(log: $BACKEND_LOG)${C_RST}"
+    "  - web      : http://localhost:3001  ${C_DIM}(log: $WEB_LOG)${C_RST}"
+  )
+  local width=56 line border pad i
+  for line in "${plain_lines[@]}"; do
+    (( ${#line} > width )) && width=${#line}
+  done
+  printf -v border '%*s' "$width" ''
+  border="${border// /─}"
+  echo "${C_BLD}${C_CYN}╭${border}╮${C_RST}"
+  for i in "${!plain_lines[@]}"; do
+    printf -v pad '%*s' "$((width - ${#plain_lines[$i]}))" ''
+    echo "${C_BLD}${C_CYN}│${C_RST}${styled_lines[$i]}${pad}${C_BLD}${C_CYN}│${C_RST}"
+  done
+  echo "${C_BLD}${C_CYN}╰${border}╯${C_RST}"
 }
 
 # ---- 进程辅助 ----
@@ -157,13 +190,6 @@ echo ""
 ok "开发环境已启动"
 echo ""
 print_ready_banner
-echo ""
-echo "服务明细:"
-echo "  - postgres : docker container investment-postgres (5432)"
-echo "  - pgweb    : http://localhost:8082"
-echo "  - nginx    : http://localhost:3000"
-echo "  - backend  : $BACKEND_HTTP_URL  (log: $BACKEND_LOG)"
-echo "  - web      : http://localhost:3001                    (log: $WEB_LOG)"
 echo ""
 echo "查看日志: tail -f $BACKEND_LOG | tail -f $WEB_LOG"
 echo "${C_YLW}${C_BLD}停止环境: make dev-stop${C_RST}"

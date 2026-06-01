@@ -44,7 +44,7 @@ func (r Registry) EinoTools(ctx context.Context) ([]EinoInvokableTool, error) {
 
 	currentTime, err := toolutils.InferTool(
 		"current_time",
-		"Get the current date and time in Asia/Shanghai timezone.",
+		"Get the current date and time in Asia/Shanghai timezone. Must be used before answering questions involving today, now, current, latest, real-time, or other time-sensitive data.",
 		func(ctx context.Context, input currentTimeInput) (map[string]any, error) {
 			return r.Execute(ctx, "current_time", map[string]any{})
 		},
