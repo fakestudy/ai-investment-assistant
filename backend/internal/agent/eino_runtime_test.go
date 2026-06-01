@@ -223,6 +223,63 @@ func TestEinoRuntimeStreamsReasoningDeltaAndToolEvents(t *testing.T) {
 	}
 }
 
+func TestEinoRuntimeInjectsCurrentTimeContextForTimeSensitivePrompt(t *testing.T) {
+	einoTools, err := tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}).EinoTools(context.Background())
+	if err != nil {
+		t.Fatalf("EinoTools() error = %v", err)
+	}
+	model := &fakeStreamChatModel{streams: [][]*schema.Message{
+		{
+			{Content: "Apple market cap answer"},
+		},
+	}}
+	runtime := &EinoRuntime{
+		spec:  DefaultChatGraphSpec(),
+		model: model,
+		tools: runtimeToolMap(t, einoTools),
+	}
+
+	events := make(chan Event)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		if err := runtime.Stream(context.Background(), []Message{{Role: "user", Content: "今天苹果市值是多少"}}, events); err != nil {
+			errs <- err
+		}
+	}()
+
+	collected := collectRuntimeEvents(t, events, errs)
+	if len(collected) != 3 {
+		t.Fatalf("events len = %d, want current_time call, current_time result, delta; events = %+v", len(collected), collected)
+	}
+	if collected[0].Kind != "tool_call" || collected[0].ToolName != "current_time" {
+		t.Fatalf("first event = %+v, want current_time tool_call", collected[0])
+	}
+	if collected[1].Kind != "tool_result" || collected[1].ToolName != "current_time" || collected[1].ToolError != "" {
+		t.Fatalf("second event = %+v, want successful current_time tool_result", collected[1])
+	}
+	if collected[2].Kind != "delta" || collected[2].Text != "Apple market cap answer" {
+		t.Fatalf("third event = %+v, want model delta after time context", collected[2])
+	}
+	if len(model.inputs) != 1 {
+		t.Fatalf("model Stream calls = %d, want 1", len(model.inputs))
+	}
+	firstInput := model.inputs[0]
+	if len(firstInput) < 2 {
+		t.Fatalf("first model input len = %d, want system time context before user", len(firstInput))
+	}
+	if firstInput[0].Role != schema.System {
+		t.Fatalf("first model message role = %s, want system", firstInput[0].Role)
+	}
+	if !strings.Contains(firstInput[0].Content, "current_time") || !strings.Contains(firstInput[0].Content, "Asia/Shanghai") {
+		t.Fatalf("system time context = %q, want current_time Asia/Shanghai context", firstInput[0].Content)
+	}
+	if firstInput[1].Role != schema.User || firstInput[1].Content != "今天苹果市值是多少" {
+		t.Fatalf("second model message = %+v, want original user prompt", firstInput[1])
+	}
+}
+
 func TestEinoRuntimeLoopsToolResultsBackToModelForFinalAnswer(t *testing.T) {
 	einoTools, err := tools.NewRegistry(config.Config{HTTPClientTimeout: time.Second}).EinoTools(context.Background())
 	if err != nil {
@@ -647,7 +704,17 @@ func (f *fakeStreamChatModel) Stream(ctx context.Context, input []*schema.Messag
 	if f.err != nil {
 		return nil, f.err
 	}
-	if len(input) == 0 || input[0].Role != schema.User || input[0].Content != "hello" {
+	if len(input) == 0 {
+		return nil, errors.New("runtime did not pass messages to Eino model")
+	}
+	hasUserMessage := false
+	for _, message := range input {
+		if message != nil && message.Role == schema.User {
+			hasUserMessage = true
+			break
+		}
+	}
+	if !hasUserMessage {
 		return nil, errors.New("runtime did not pass user message to Eino model")
 	}
 	f.inputs = append(f.inputs, cloneSchemaMessages(input))

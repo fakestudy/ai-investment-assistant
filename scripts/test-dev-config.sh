@@ -27,6 +27,19 @@ assert_not_contains() {
   fi
 }
 
+assert_banner_contains() {
+  local file="$1" pattern="$2" message="$3"
+  if ! awk '
+    /╭/ { in_banner = 1 }
+    in_banner && index($0, pattern) { found = 1 }
+    /╰/ { in_banner = 0 }
+    END { exit found ? 0 : 1 }
+  ' pattern="$pattern" "$file"; then
+    echo "FAIL: $message" >&2
+    exit 1
+  fi
+}
+
 assert_file_not_exists() {
   local file="$1" message="$2"
   if [[ -e "$file" ]]; then
@@ -171,6 +184,8 @@ assert_contains "$OUTPUT_FILE" "AI Investment Assistant" \
   "dev-start.sh must print the product name in the ready banner"
 assert_contains "$OUTPUT_FILE" "http://localhost:3000" \
   "dev-start.sh must print the nginx localhost entry URL"
+assert_banner_contains "$OUTPUT_FILE" "服务明细:" \
+  "dev-start.sh must print service details inside the ready banner"
 if run_dev_start "$TMP_DIR" ":9090" "fail" "$OUTPUT_FILE"; then
   echo "FAIL: dev-start.sh must fail when web process exits during startup" >&2
   exit 1
@@ -198,8 +213,8 @@ assert_not_contains "$REPO_ROOT/scripts/dev-start.sh" 'cfg.Port' \
   "dev-start.sh comments must not describe removed cfg.Port behavior"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'backend_http_url "${BFF_HTTP_ADDR:-}"' \
   "dev-start.sh must use shared backend URL formatter"
-assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'docker compose up -d postgres nginx' \
-  "dev-start.sh must start nginx with postgres"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'docker compose up -d --remove-orphans postgres nginx pgweb' \
+  "dev-start.sh must start nginx and pgweb with postgres"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'show_startup_animation' \
   "dev-start.sh must include a terminal startup animation"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'nohup pnpm dev >"$WEB_LOG" 2>&1 &' \

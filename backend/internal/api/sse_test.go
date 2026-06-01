@@ -55,7 +55,9 @@ func TestWriteSSEEventsSerializesErrorTextAsMessage(t *testing.T) {
 }
 
 func TestRouterStreamsChatSSE(t *testing.T) {
-	router, conversations := newTestRouter(t)
+	agent := newStaticAPIAgent(chat.AgentEvent{Kind: "delta", Text: "Hello assistant"})
+	_, conversations := newTestRouterWithChat(t, nil)
+	router := NewRouter(conversations, chat.NewService(conversations, agent))
 	created, err := conversations.CreateConversation(t.Context())
 	if err != nil {
 		t.Fatalf("CreateConversation() error = %v", err)
@@ -175,6 +177,32 @@ func assertSSEEventTypes(t *testing.T, events []map[string]any, want []string) {
 }
 
 var _ = conversation.ChatMessage{}
+
+type staticAPIAgent struct {
+	events []chat.AgentEvent
+}
+
+func newStaticAPIAgent(events ...chat.AgentEvent) staticAPIAgent {
+	return staticAPIAgent{events: events}
+}
+
+func (a staticAPIAgent) Stream(ctx context.Context, messages []chat.AgentMessage) (<-chan chat.AgentEvent, <-chan error) {
+	events := make(chan chat.AgentEvent)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(events)
+		defer close(errs)
+		for _, event := range a.events {
+			select {
+			case <-ctx.Done():
+				errs <- ctx.Err()
+				return
+			case events <- event:
+			}
+		}
+	}()
+	return events, errs
+}
 
 type releasedAPIAgent struct {
 	first   chat.AgentEvent

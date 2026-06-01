@@ -86,6 +86,15 @@ func NewEinoRuntime(ctx context.Context, cfg config.Config, registry tools.Regis
 
 func (r *EinoRuntime) Stream(ctx context.Context, messages []Message, events chan<- Event) error {
 	history := toEinoMessages(messages)
+	if shouldInjectCurrentTime(messages) {
+		timeContext, err := r.currentTimeContextMessage(ctx, events)
+		if err != nil {
+			return err
+		}
+		if timeContext != nil {
+			history = append([]*schema.Message{timeContext}, history...)
+		}
+	}
 	for iteration := 0; iteration <= maxEinoToolIterations; iteration++ {
 		assistantMessage, err := r.streamModelRound(ctx, history, events)
 		if err != nil {
