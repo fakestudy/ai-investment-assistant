@@ -1,13 +1,17 @@
 "use client";
 
 import { BrainIcon, ListTreeIcon, WrenchIcon } from "lucide-react";
+import { useCallback } from "react";
+import { useStickToBottomContext } from "use-stick-to-bottom";
 import { ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought";
 import {
 	Reasoning,
 	ReasoningContent,
 	ReasoningTrigger,
+	useReasoning,
 } from "@/components/ai-elements/reasoning";
 import type { ChatMessage, ChatTimelinePart } from "../types";
+import { shouldReleaseChatStickinessForReasoningToggle } from "./chat-reasoning-scroll-state";
 import { ToolInvocationCard } from "./tool-invocation-card";
 
 type ChatMessageTimelineProps = {
@@ -62,7 +66,7 @@ export function ChatMessageTimeline({
 
 	return (
 		<Reasoning isStreaming={isStreaming}>
-			<ReasoningTrigger icon={<ListTreeIcon className="size-4" />} />
+			<ChatReasoningTrigger />
 			<ReasoningContent>
 				<div className="space-y-3">
 					{parts.map((part) =>
@@ -92,5 +96,27 @@ export function ChatMessageTimeline({
 				</div>
 			</ReasoningContent>
 		</Reasoning>
+	);
+}
+
+function ChatReasoningTrigger() {
+	const { isOpen } = useReasoning();
+	const { stopScroll } = useStickToBottomContext();
+
+	const releaseStickinessBeforeOpening = useCallback(() => {
+		if (
+			shouldReleaseChatStickinessForReasoningToggle({
+				isOpenBeforeToggle: isOpen,
+			})
+		) {
+			stopScroll();
+		}
+	}, [isOpen, stopScroll]);
+
+	return (
+		<ReasoningTrigger
+			icon={<ListTreeIcon className="size-4" />}
+			onClickCapture={releaseStickinessBeforeOpening}
+		/>
 	);
 }
