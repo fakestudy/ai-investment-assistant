@@ -16,13 +16,51 @@ class SkillContractTest(unittest.TestCase):
 
     def test_objective_focuses_on_strict_daily_understanding_review(self):
         for expected in (
-            "extremely strict daily technical reviewer",
+            "senior technical interviewer",
+            "full-stack engineering",
+            "Agent systems",
+            "large language models",
             "today's engineering work",
             "underlying mechanisms",
             "reason independently about decisions",
             "Do not reward activity, code volume, commit count",
             "ask follow-up questions instead of immediately",
             "Do not complete missing reasoning",
+        ):
+            self.assertIn(expected, self.content)
+
+    def test_prioritizes_principles_over_implementation_recall(self):
+        for expected in (
+            "Problem essence",
+            "Causal mechanism",
+            "Architectural reasoning",
+            "System boundaries and failure modes",
+            "Transfer and verification",
+            "Implementation details are supporting evidence, not the interview target",
+            "Do not ask for API names, command syntax, configuration keys",
+            "AI-generated implementation",
+            "validate whether an AI-generated answer or implementation is correct",
+        ):
+            self.assertIn(expected, self.content)
+
+    def test_selects_questions_across_relevant_interviewer_domains(self):
+        for expected in (
+            "Frontend and browser systems",
+            "Backend, data, and distributed systems",
+            "Agent architecture",
+            "LLM application engineering",
+            "RAG, tool calling, evaluation, and observability",
+            "Do not force irrelevant domains",
+        ):
+            self.assertIn(expected, self.content)
+
+    def test_followups_progress_from_principle_to_validation(self):
+        for expected in (
+            "What problem is actually being solved?",
+            "Why does this mechanism work?",
+            "Under what assumptions does the conclusion hold?",
+            "What would falsify the conclusion?",
+            "How would you verify it without trusting the AI or the implementation?",
         ):
             self.assertIn(expected, self.content)
 

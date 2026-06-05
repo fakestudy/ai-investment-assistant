@@ -1,4 +1,4 @@
 interface:
   display_name: "Daily Review"
-  short_description: "Review today's project learning through a rigorous interview"
-  default_prompt: "Use $daily-review to review today's project work and test my understanding."
+  short_description: "Test today's engineering principles with a senior AI interviewer"
+  default_prompt: "Use $daily-review to interview me on today's work, focusing on principles, reasoning, boundaries, and transfer rather than implementation recall."
