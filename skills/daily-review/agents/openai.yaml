@@ -1,0 +1,4 @@
+interface:
+  display_name: "Daily Review"
+  short_description: "Review today's project learning through a rigorous interview"
+  default_prompt: "Use $daily-review to review today's project work and test my understanding."
