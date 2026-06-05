@@ -52,6 +52,7 @@ export type ChatMessage = {
 export type StreamChatRequest = {
 	conversationId: string;
 	message: string;
+	generateTitle?: boolean;
 	parentMessageId?: string;
 	regenerateFromMessageId?: string;
 };

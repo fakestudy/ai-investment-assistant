@@ -21,12 +21,6 @@ warn() { echo "  ${C_YLW}!${C_RST} $*"; WARN_COUNT=$((WARN_COUNT+1)); }
 fail() { echo "  ${C_RED}✗${C_RST} $*"; FAIL_COUNT=$((FAIL_COUNT+1)); }
 section() { echo ""; echo "${C_BLD}${C_BLU}== $* ==${C_RST}"; }
 
-# ---- 版本比较: ver_ge "1.26.2" "1.25.0" => 0(true) ----
-ver_ge() {
-  # 返回 0 表示 $1 >= $2
-  printf '%s\n%s\n' "$2" "$1" | sort -V -C
-}
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -88,24 +82,6 @@ fi
 # ---------------- 2. 工具链版本 ----------------
 section "2. 工具链版本"
 
-# Go: 期望 >= 1.25 (mise 锁定 1.26.2)
-GO_REQ_MIN="1.25"
-GO_EXPECT="1.26.2"
-if command -v go >/dev/null 2>&1; then
-  GO_VER="$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
-  if [[ -n "$GO_VER" ]] && ver_ge "$GO_VER" "$GO_REQ_MIN"; then
-    if [[ "$GO_VER" == "$GO_EXPECT" ]]; then
-      ok "go $GO_VER (与 mise 锁定一致)"
-    else
-      ok "go $GO_VER (满足 >= $GO_REQ_MIN，mise 期望 $GO_EXPECT)"
-    fi
-  else
-    fail "go 版本过低: $GO_VER，需要 >= $GO_REQ_MIN"
-  fi
-else
-  fail "go 未安装"
-fi
-
 # Node: 期望 == 22.22.2 (mise.toml)
 NODE_EXPECT="22.22.2"
 if command -v node >/dev/null 2>&1; then
@@ -130,6 +106,19 @@ if command -v pnpm >/dev/null 2>&1; then
   fi
 else
   fail "pnpm 未安装 (期望 $PNPM_EXPECT)"
+fi
+
+# uv: agent 依赖与启动入口
+UV_EXPECT="0.11.7"
+if command -v uv >/dev/null 2>&1; then
+  UV_VER="$(uv --version 2>/dev/null | awk '{print $2}')"
+  if [[ "$UV_VER" == "$UV_EXPECT" ]]; then
+    ok "uv $UV_VER"
+  else
+    warn "uv $UV_VER (期望 $UV_EXPECT)"
+  fi
+else
+  fail "uv 未安装 (agent 启动必需)"
 fi
 
 # ---------------- 3. 环境变量 ----------------
@@ -216,7 +205,7 @@ fi
 
 check_port 3001 "web/Next.js"       fail
 if [[ -n "$BACKEND_HTTP_PORT" ]]; then
-  check_port "$BACKEND_HTTP_PORT" "backend/Gin" fail
+  check_port "$BACKEND_HTTP_PORT" "agent/FastAPI" fail
 fi
 check_port 3000 "nginx/reverse proxy" fail
 check_port 5432 "postgres"          warn

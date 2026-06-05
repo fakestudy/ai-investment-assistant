@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 停止本地开发环境：web (pnpm) + backend (go) + postgres/nginx/pgweb (docker)
+# 停止本地开发环境：web (pnpm) + agent (FastAPI) + postgres/nginx/pgweb (docker)
 
 set -u
 
@@ -7,7 +7,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 RUN_DIR="$REPO_ROOT/.run"
-BACKEND_PID_FILE="$RUN_DIR/backend.pid"
+AGENT_PID_FILE="$RUN_DIR/agent.pid"
+LEGACY_BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 WEB_PID_FILE="$RUN_DIR/web.pid"
 
 if [[ -t 1 ]]; then
@@ -37,7 +38,7 @@ stop_pid_file() {
   fi
 
   info "停止 $label (pid=$pid)..."
-  # 终止整个进程组（go run / pnpm dev 会派生子进程）
+  # 终止整个进程组（uv run / pnpm dev 会派生子进程）
   local pgid
   pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
   if [[ -n "$pgid" ]]; then
@@ -67,7 +68,10 @@ stop_pid_file() {
 }
 
 stop_pid_file "web" "$WEB_PID_FILE"
-stop_pid_file "backend" "$BACKEND_PID_FILE"
+stop_pid_file "agent" "$AGENT_PID_FILE"
+if [[ -f "$LEGACY_BACKEND_PID_FILE" ]]; then
+  stop_pid_file "legacy backend" "$LEGACY_BACKEND_PID_FILE"
+fi
 
 # 停止 docker compose 服务
 info "停止 postgres、nginx 与 pgweb 容器..."

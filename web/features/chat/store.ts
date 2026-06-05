@@ -610,11 +610,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			},
 		}));
 
+		const generateTitle =
+			get().conversations.find(
+				(conversation) => conversation.id === conversationId,
+			)?.title === "New chat";
+
 		void startStream(
 			{
 				conversationId,
 				connect: (signal, onEvent) =>
-					streamChat({ conversationId, message }, { signal, onEvent }),
+					streamChat(
+						{ conversationId, message, generateTitle },
+						{ signal, onEvent },
+					),
 			},
 			set,
 			get,

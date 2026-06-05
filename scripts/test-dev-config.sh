@@ -57,11 +57,11 @@ assert_fails() {
   fi
 }
 
-assert_backend_failure_exits() {
+assert_agent_failure_exits() {
   local block
-  block="$(awk '/backend 启动失败/{ print; getline; print }' "$REPO_ROOT/scripts/dev-start.sh")"
+  block="$(awk '/agent 启动失败/{ print; getline; print }' "$REPO_ROOT/scripts/dev-start.sh")"
   if [[ "$block" != *"exit 1"* ]]; then
-    echo "FAIL: dev-start.sh must exit before printing success when backend fails" >&2
+    echo "FAIL: dev-start.sh must exit before printing success when agent fails" >&2
     exit 1
   fi
 }
@@ -85,14 +85,14 @@ if [[ "${1:-}" == "inspect" ]]; then
 fi
 exit 0
 EOF
-  cat >"$fake_bin/go" <<'EOF'
+  cat >"$fake_bin/uv" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ -n "${FAKE_SERVICE_MARKERS:-}" ]]; then
   mkdir -p "$FAKE_SERVICE_MARKERS"
-  touch "$FAKE_SERVICE_MARKERS/go"
+  touch "$FAKE_SERVICE_MARKERS/uv"
 fi
-if [[ "${FAKE_BACKEND_MODE:-success}" == "fail" ]]; then
+if [[ "${FAKE_AGENT_MODE:-success}" == "fail" ]]; then
   exit 1
 fi
 sleep 30
@@ -112,7 +112,7 @@ if [[ "${FAKE_WEB_MODE:-success}" == "fail" ]]; then
 fi
 sleep 30
 EOF
-  chmod +x "$fake_bin/docker" "$fake_bin/go" "$fake_bin/pnpm"
+  chmod +x "$fake_bin/docker" "$fake_bin/uv" "$fake_bin/pnpm"
 }
 
 cleanup_run_dir() {
@@ -129,6 +129,7 @@ cleanup_run_dir() {
 
 run_dev_start() {
   local tmp_dir="$1" addr="$2" web_mode="$3" output_file="$4"
+  local agent_mode="${5:-success}"
   local fake_bin="$tmp_dir/bin"
   local env_file="$tmp_dir/.env"
   local run_dir="$tmp_dir/run"
@@ -139,7 +140,8 @@ run_dev_start() {
 DEEPSEEK_API_KEY=test-key
 BFF_HTTP_ADDR=$addr
 EOF
-  FAKE_WEB_MODE="$web_mode" \
+  FAKE_AGENT_MODE="$agent_mode" \
+    FAKE_WEB_MODE="$web_mode" \
     FAKE_SERVICE_MARKERS="$markers_dir" \
     DEV_ENV_FILE="$env_file" \
     DEV_RUN_DIR="$run_dir" \
@@ -174,7 +176,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'cleanup_run_dir "$TMP_DIR/run"; rm -rf "$TMP_DIR"' EXIT
 OUTPUT_FILE="$TMP_DIR/dev-start.out"
 run_dev_start "$TMP_DIR" ":9090" "success" "$OUTPUT_FILE"
-assert_contains "$OUTPUT_FILE" "backend  : http://localhost:9090" \
+assert_contains "$OUTPUT_FILE" "agent    : http://localhost:9090" \
   "dev-start.sh must render :9090 as localhost URL"
 assert_contains "$OUTPUT_FILE" "本地入口已就绪" \
   "dev-start.sh must print a prominent local entry banner"
@@ -186,6 +188,14 @@ assert_contains "$OUTPUT_FILE" "http://localhost:3000" \
   "dev-start.sh must print the nginx localhost entry URL"
 assert_banner_contains "$OUTPUT_FILE" "服务明细:" \
   "dev-start.sh must print service details inside the ready banner"
+if run_dev_start "$TMP_DIR" ":9090" "success" "$OUTPUT_FILE" "fail"; then
+  echo "FAIL: dev-start.sh must fail when agent process exits during startup" >&2
+  exit 1
+fi
+assert_contains "$OUTPUT_FILE" "agent 启动失败" \
+  "dev-start.sh must report agent startup failure"
+assert_not_contains "$OUTPUT_FILE" "开发环境已启动" \
+  "dev-start.sh must not print success after agent startup failure"
 if run_dev_start "$TMP_DIR" ":9090" "fail" "$OUTPUT_FILE"; then
   echo "FAIL: dev-start.sh must fail when web process exits during startup" >&2
   exit 1
@@ -202,8 +212,8 @@ assert_contains "$OUTPUT_FILE" "BFF_HTTP_ADDR 必须是 :port 或 host:port" \
   "dev-start.sh must report invalid bare BFF_HTTP_ADDR"
 assert_file_not_exists "$TMP_DIR/markers/docker" \
   "dev-start.sh must validate BFF_HTTP_ADDR before starting docker"
-assert_file_not_exists "$TMP_DIR/markers/go" \
-  "dev-start.sh must validate BFF_HTTP_ADDR before starting backend"
+assert_file_not_exists "$TMP_DIR/markers/uv" \
+  "dev-start.sh must validate BFF_HTTP_ADDR before starting agent"
 assert_file_not_exists "$TMP_DIR/markers/pnpm" \
   "dev-start.sh must validate BFF_HTTP_ADDR before starting web"
 
@@ -217,13 +227,15 @@ assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'docker compose up -d --remove
   "dev-start.sh must start nginx and pgweb with postgres"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'show_startup_animation' \
   "dev-start.sh must include a terminal startup animation"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'nohup env PYTHONPYCACHEPREFIX=../.pycache uv run python main.py >"$AGENT_LOG" 2>&1 &' \
+  "dev-start.sh must use the agent package dev entry"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'nohup pnpm dev >"$WEB_LOG" 2>&1 &' \
   "dev-start.sh must use the web package dev script"
 assert_not_contains "$REPO_ROOT/scripts/dev-start.sh" 'pnpm dev -- --port 3001' \
   "dev-start.sh must not override the web dev port"
 assert_contains "$REPO_ROOT/web/package.json" '"dev": "next dev --port 3001"' \
   "web package dev script must default Next.js to port 3001"
-assert_backend_failure_exits
+assert_agent_failure_exits
 assert_contains "$REPO_ROOT/scripts/dev-stop.sh" 'docker compose stop nginx postgres' \
   "dev-stop.sh must stop nginx with postgres"
 assert_contains "$REPO_ROOT/scripts/check-dev.sh" 'DEEPSEEK_TIMEOUT_SECONDS' \
@@ -247,7 +259,7 @@ assert_contains "$REPO_ROOT/docker-compose.yml" 'image: nginx:1.27-alpine' \
 assert_contains "$REPO_ROOT/docker-compose.yml" '"3000:80"' \
   "docker-compose.yml must expose nginx on localhost port 3000"
 assert_contains "$REPO_ROOT/infra/nginx/local.conf" 'proxy_pass http://host.docker.internal:8081;' \
-  "nginx local config must proxy API requests to host backend"
+  "nginx local config must proxy API requests to host agent"
 assert_contains "$REPO_ROOT/infra/nginx/local.conf" 'proxy_pass http://host.docker.internal:3001;' \
   "nginx local config must proxy web requests to host frontend"
 assert_contains "$REPO_ROOT/Makefile" 'test-dev-config:' \

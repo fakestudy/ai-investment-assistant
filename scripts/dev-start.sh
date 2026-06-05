@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 启动本地开发环境：postgres/nginx/pgweb (docker) + backend (go) + web (pnpm)
-# 不再使用 backend / web 的 Docker 镜像，二者直接以脚本进程方式运行。
+# 启动本地开发环境：postgres/nginx/pgweb (docker) + agent (FastAPI) + web (pnpm)
+# 不再使用 agent / web 的 Docker 镜像，二者直接以脚本进程方式运行。
 
 set -u
 
@@ -14,9 +14,9 @@ RUN_DIR="${DEV_RUN_DIR:-$REPO_ROOT/.run}"
 LOG_DIR="${DEV_LOG_DIR:-$RUN_DIR/logs}"
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
-BACKEND_PID_FILE="$RUN_DIR/backend.pid"
+AGENT_PID_FILE="$RUN_DIR/agent.pid"
 WEB_PID_FILE="$RUN_DIR/web.pid"
-BACKEND_LOG="$LOG_DIR/backend.log"
+AGENT_LOG="$LOG_DIR/agent.log"
 WEB_LOG="$LOG_DIR/web.log"
 
 # ---- 输出辅助 ----
@@ -52,13 +52,13 @@ print_ready_banner() {
     "本地入口已就绪"
     ""
     "  访问 / 登录  http://localhost:3000"
-    "  Nginx 3000 -> Web 3001 -> Backend 8081"
+    "  Nginx 3000 -> Web 3001 -> Agent 8081"
     ""
     "服务明细:"
     "  - postgres : docker container investment-postgres (5432)"
     "  - pgweb    : http://localhost:8082"
     "  - nginx    : http://localhost:3000"
-    "  - backend  : $BACKEND_HTTP_URL  (log: $BACKEND_LOG)"
+    "  - agent    : $AGENT_HTTP_URL  (log: $AGENT_LOG)"
     "  - web      : http://localhost:3001  (log: $WEB_LOG)"
   )
   local -a styled_lines=(
@@ -66,13 +66,13 @@ print_ready_banner() {
     "${C_GRN}本地入口已就绪${C_RST}"
     ""
     "  ${C_BLD}访问 / 登录${C_RST}  ${C_GRN}http://localhost:3000${C_RST}"
-    "  ${C_DIM}Nginx 3000 -> Web 3001 -> Backend 8081${C_RST}"
+    "  ${C_DIM}Nginx 3000 -> Web 3001 -> Agent 8081${C_RST}"
     ""
     "${C_BLD}服务明细:${C_RST}"
     "  - postgres : docker container investment-postgres (5432)"
     "  - pgweb    : http://localhost:8082"
     "  - nginx    : http://localhost:3000"
-    "  - backend  : $BACKEND_HTTP_URL  ${C_DIM}(log: $BACKEND_LOG)${C_RST}"
+    "  - agent    : $AGENT_HTTP_URL  ${C_DIM}(log: $AGENT_LOG)${C_RST}"
     "  - web      : http://localhost:3001  ${C_DIM}(log: $WEB_LOG)${C_RST}"
   )
   local width=56 line border pad i
@@ -115,7 +115,7 @@ if [[ "${DATABASE_URL:-}" == *"@postgres:"* ]]; then
   warn "DATABASE_URL 中的 host 已临时替换为 localhost（仅本进程生效）"
 fi
 
-if ! BACKEND_HTTP_URL="$(backend_http_url "${BFF_HTTP_ADDR:-}")"; then
+if ! AGENT_HTTP_URL="$(backend_http_url "${BFF_HTTP_ADDR:-}")"; then
   error "BFF_HTTP_ADDR 必须是 :port 或 host:port"
   exit 1
 fi
@@ -138,24 +138,24 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if [[ "$status" != "healthy" ]]; then
-  warn "postgres 健康检查未通过，继续尝试启动后端"
+  warn "postgres 健康检查未通过，继续尝试启动 agent"
 fi
 
-# ---- 3. 启动 backend ----
-if is_running "$BACKEND_PID_FILE"; then
-  warn "backend 已在运行 (pid=$(cat "$BACKEND_PID_FILE"))，跳过"
+# ---- 3. 启动 agent ----
+if is_running "$AGENT_PID_FILE"; then
+  warn "agent 已在运行 (pid=$(cat "$AGENT_PID_FILE"))，跳过"
 else
-  info "启动 backend (go run ./cmd/server)..."
+  info "启动 agent (uv run python main.py)..."
   (
-    cd "$REPO_ROOT/backend"
-    nohup go run ./cmd/server >"$BACKEND_LOG" 2>&1 &
-    echo $! > "$BACKEND_PID_FILE"
+    cd "$REPO_ROOT/agent"
+    nohup env PYTHONPYCACHEPREFIX=../.pycache uv run python main.py >"$AGENT_LOG" 2>&1 &
+    echo $! > "$AGENT_PID_FILE"
   )
   sleep 1
-  if is_running "$BACKEND_PID_FILE"; then
-    ok "backend 已启动 (pid=$(cat "$BACKEND_PID_FILE"))，日志: $BACKEND_LOG"
+  if is_running "$AGENT_PID_FILE"; then
+    ok "agent 已启动 (pid=$(cat "$AGENT_PID_FILE"))，日志: $AGENT_LOG"
   else
-    error "backend 启动失败，请查看 $BACKEND_LOG"
+    error "agent 启动失败，请查看 $AGENT_LOG"
     exit 1
   fi
 fi
@@ -191,5 +191,5 @@ ok "开发环境已启动"
 echo ""
 print_ready_banner
 echo ""
-echo "查看日志: tail -f $BACKEND_LOG | tail -f $WEB_LOG"
+echo "查看日志: tail -f $AGENT_LOG | tail -f $WEB_LOG"
 echo "${C_YLW}${C_BLD}停止环境: make dev-stop${C_RST}"

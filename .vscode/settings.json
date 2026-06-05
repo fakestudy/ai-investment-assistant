@@ -1,3 +1,14 @@
 {
-  "cSpell.words": ["DEEPSEEK", "Eino"]
+  "cSpell.words": ["bufbuild", "DEEPSEEK", "dotenv", "Eino", "uvicorn"],
+  "python.defaultInterpreterPath": "${workspaceFolder}/agent/.venv/bin/python",
+  "python.terminal.activateEnvironment": false,
+  "clang-format.executable": "/opt/homebrew/bin/clang-format",
+  "[proto]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.formatOnSave": true
+  },
+  "[proto3]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.formatOnSave": true
+  }
 }

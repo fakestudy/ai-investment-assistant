@@ -2,7 +2,9 @@
 node = "22.22.2"
 go = "1.26.2"
 buf = "1.69.0"
+python = "3.12"
+uv = "0.11.7"
 
 [tasks.doctor]
 description = "Print the tool versions expected by this project"
-run = "node --version && pnpm --version && go version && python3 --version && buf --version"
+run = "node --version && pnpm --version && go version && python --version && uv --version && buf --version"
