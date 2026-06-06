@@ -9,11 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import DATABASE_URL, AsyncSessionLocal
 from model.agent_run_event import AgentRunEvent
-from repository.agent_run_event import create_agent_run_event, list_run_events_after
+from repository.agent_run_event import (
+    create_agent_run_event,
+    has_run_event_at_or_before,
+    list_run_events_after,
+)
 
 STABLE_EVENT_TYPES = {"done", "error", "approval_required"}
 EventLoader = Callable[[str, int], Awaitable[list[AgentRunEvent]]]
 NotificationWaiter = Callable[[str, float], Awaitable[bool]]
+StableBoundaryChecker = Callable[[str, int], Awaitable[bool]]
 
 
 async def append_run_event(
@@ -46,6 +51,7 @@ async def stream_run_events(
     wait_for_new_events: bool = False,
     event_loader: EventLoader | None = None,
     notification_waiter: NotificationWaiter | None = None,
+    stable_boundary_checker: StableBoundaryChecker | None = None,
     heartbeat_seconds: float = 15,
     max_idle_cycles: int | None = None,
 ) -> AsyncIterator[str]:
@@ -53,6 +59,7 @@ async def stream_run_events(
     idle_cycles = 0
     load_events = event_loader or load_run_events_after
     wait_for_notification = notification_waiter or wait_for_run_event_notification
+    has_stable_boundary = stable_boundary_checker or has_stable_event_at_or_before
 
     while True:
         events = await load_events(run_id, cursor)
@@ -68,6 +75,9 @@ async def stream_run_events(
             continue
 
         if not wait_for_new_events:
+            return
+
+        if await has_stable_boundary(run_id, cursor):
             return
 
         notified = await wait_for_notification(run_id, heartbeat_seconds)
@@ -87,6 +97,19 @@ async def load_run_events_after(
             session,
             run_id=run_id,
             after_event_id=after_event_id,
+        )
+
+
+async def has_stable_event_at_or_before(
+    run_id: str,
+    event_id: int,
+) -> bool:
+    async with AsyncSessionLocal() as session:
+        return await has_run_event_at_or_before(
+            session,
+            run_id=run_id,
+            event_types=STABLE_EVENT_TYPES,
+            event_id=event_id,
         )
 
 

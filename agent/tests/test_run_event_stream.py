@@ -48,6 +48,12 @@ class RunEventStreamTest(unittest.TestCase):
     def test_stream_stops_after_stable_boundary_event(self) -> None:
         asyncio.run(self._test_stream_stops_after_stable_boundary_event())
 
+    def test_resume_after_cursor_beyond_stable_boundary_ends(self) -> None:
+        asyncio.run(self._test_resume_after_cursor_beyond_stable_boundary_ends())
+
+    def test_stream_uses_injected_stable_boundary_checker(self) -> None:
+        asyncio.run(self._test_stream_uses_injected_stable_boundary_checker())
+
     def test_stream_emits_heartbeat_while_waiting_for_events(self) -> None:
         asyncio.run(self._test_stream_emits_heartbeat_while_waiting_for_events())
 
@@ -153,6 +159,77 @@ class RunEventStreamTest(unittest.TestCase):
         self.assertIn(f"id: {second.id}\n", frames[1])
         self.assertIn('"type":"done"', frames[1])
         await self._reset_run(run_id)
+
+    async def _test_resume_after_cursor_beyond_stable_boundary_ends(self) -> None:
+        run_id = "run-event-resume-after-stable"
+        await self._reset_run(run_id)
+        await self._create_run(run_id)
+
+        async with AsyncSessionLocal() as session:
+            stable = await self._append_run_event(
+                session,
+                run_id,
+                "done",
+                {"type": "done", "messageId": "assistant-resume-after-stable"},
+            )
+            await session.commit()
+
+        waiter_calls = 0
+
+        async def fail_if_waiting(_: str, __: float) -> bool:
+            nonlocal waiter_calls
+            waiter_calls += 1
+            return False
+
+        frames = [
+            frame
+            async for frame in stream_run_events(
+                run_id,
+                after_event_id=stable.id + 1,
+                wait_for_new_events=True,
+                notification_waiter=fail_if_waiting,
+                heartbeat_seconds=0.01,
+                max_idle_cycles=1,
+            )
+        ]
+
+        self.assertEqual(frames, [])
+        self.assertEqual(waiter_calls, 0)
+        await self._reset_run(run_id)
+
+    async def _test_stream_uses_injected_stable_boundary_checker(self) -> None:
+        checker_calls = []
+        waiter_calls = 0
+
+        async def empty_loader(_: str, __: int) -> list[AgentRunEvent]:
+            return []
+
+        async def stable_checker(run_id: str, event_id: int) -> bool:
+            checker_calls.append((run_id, event_id))
+            return True
+
+        async def fail_if_waiting(_: str, __: float) -> bool:
+            nonlocal waiter_calls
+            waiter_calls += 1
+            return False
+
+        frames = [
+            frame
+            async for frame in stream_run_events(
+                "run-event-injected-stable-checker",
+                after_event_id=42,
+                wait_for_new_events=True,
+                event_loader=empty_loader,
+                notification_waiter=fail_if_waiting,
+                stable_boundary_checker=stable_checker,
+                heartbeat_seconds=0.01,
+                max_idle_cycles=1,
+            )
+        ]
+
+        self.assertEqual(frames, [])
+        self.assertEqual(checker_calls, [("run-event-injected-stable-checker", 42)])
+        self.assertEqual(waiter_calls, 0)
 
     async def _test_stream_emits_heartbeat_while_waiting_for_events(self) -> None:
         async def empty_loader(_: str, __: int) -> list[AgentRunEvent]:
