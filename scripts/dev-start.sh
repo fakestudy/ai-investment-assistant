@@ -152,10 +152,29 @@ else
     echo $! > "$AGENT_PID_FILE"
   )
   sleep 1
-  if is_running "$AGENT_PID_FILE"; then
-    ok "agent 已启动 (pid=$(cat "$AGENT_PID_FILE"))，日志: $AGENT_LOG"
-  else
+  if ! is_running "$AGENT_PID_FILE"; then
     error "agent 启动失败，请查看 $AGENT_LOG"
+    exit 1
+  fi
+  ok "agent 进程已拉起 (pid=$(cat "$AGENT_PID_FILE"))，日志: $AGENT_LOG"
+
+  info "等待 agent HTTP 就绪 ($AGENT_HTTP_URL/api/health)..."
+  agent_ready=0
+  for _ in $(seq 1 60); do
+    if ! is_running "$AGENT_PID_FILE"; then
+      error "agent 进程已退出，请查看 $AGENT_LOG"
+      exit 1
+    fi
+    if curl -fsS -o /dev/null "$AGENT_HTTP_URL/api/health" 2>/dev/null; then
+      agent_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$agent_ready" == "1" ]]; then
+    ok "agent HTTP 已就绪"
+  else
+    error "agent HTTP 未在超时时间内就绪，请查看 $AGENT_LOG"
     exit 1
   fi
 fi
@@ -178,10 +197,31 @@ else
     echo $! > "$WEB_PID_FILE"
   )
   sleep 1
-  if is_running "$WEB_PID_FILE"; then
-    ok "web 已启动 (pid=$(cat "$WEB_PID_FILE"))，日志: $WEB_LOG"
-  else
+  if ! is_running "$WEB_PID_FILE"; then
     error "web 启动失败，请查看 $WEB_LOG"
+    exit 1
+  fi
+  ok "web 进程已拉起 (pid=$(cat "$WEB_PID_FILE"))，日志: $WEB_LOG"
+
+  # Next.js dev 首次访问路由才会现场编译，这里预热 /chat 并等待首屏可访问，
+  # 避免「脚本提示已启动但刷新拿不到页面/数据」的竞态。
+  info "等待 web 首屏就绪并预热 /chat..."
+  web_ready=0
+  for _ in $(seq 1 120); do
+    if ! is_running "$WEB_PID_FILE"; then
+      error "web 进程已退出，请查看 $WEB_LOG"
+      exit 1
+    fi
+    if curl -fsS -o /dev/null "http://localhost:3001/chat" 2>/dev/null; then
+      web_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$web_ready" == "1" ]]; then
+    ok "web 首屏已就绪"
+  else
+    error "web 首屏未在超时时间内就绪，请查看 $WEB_LOG"
     exit 1
   fi
 fi

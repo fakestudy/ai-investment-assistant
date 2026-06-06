@@ -1,13 +1,18 @@
+import asyncio
 import json
 import os
 import unittest
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from langchain_deepseek import ChatDeepSeek
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import delete, select
 
+from core.database import AsyncSessionLocal, engine
+from model.conversation import Conversation
+from model.message import Message
 from schema.chat import ChatStreamRequest, ChatStreamResponse
 from service.chat import (
     format_sse_data,
@@ -15,14 +20,17 @@ from service.chat import (
     get_model,
     get_conversation_title,
     iter_chat_events,
+    iter_chat_events_with_persistence,
 )
 
 
 class FakeAgent:
     def __init__(self, chunks: list[tuple[object, dict[str, object]]]) -> None:
         self.chunks = chunks
+        self.stream_kwargs: dict[str, object] | None = None
 
-    def stream(self, **_: object):
+    def stream(self, **kwargs: object):
+        self.stream_kwargs = kwargs
         return iter(self.chunks)
 
 
@@ -34,6 +42,56 @@ class StaticModel:
         if isinstance(self.response, Exception):
             raise self.response
         return self.response
+
+
+class TrackingSession:
+    def __init__(self, name: str, events: list[str]) -> None:
+        self.name = name
+        self.events = events
+
+    async def commit(self) -> None:
+        self.events.append(f"commit:{self.name}")
+
+    async def rollback(self) -> None:
+        self.events.append(f"rollback:{self.name}")
+
+
+class TrackingSessionContext:
+    def __init__(self, name: str, events: list[str]) -> None:
+        self.name = name
+        self.events = events
+        self.session = TrackingSession(name, events)
+
+    async def __aenter__(self) -> TrackingSession:
+        self.events.append(f"enter:{self.name}")
+        return self.session
+
+    async def __aexit__(self, *_: object) -> None:
+        self.events.append(f"exit:{self.name}")
+
+
+class TrackingSessionFactory:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.count = 0
+
+    def __call__(self) -> TrackingSessionContext:
+        self.count += 1
+        return TrackingSessionContext(f"session-{self.count}", self.events)
+
+
+class InspectingAgent(FakeAgent):
+    def __init__(
+        self,
+        chunks: list[tuple[object, dict[str, object]]],
+        events: list[str],
+    ) -> None:
+        super().__init__(chunks)
+        self.events = events
+
+    def stream(self, **kwargs: object):
+        self.events.append("stream:start")
+        return super().stream(**kwargs)
 
 
 class FormatSSEDataTest(unittest.TestCase):
@@ -167,6 +225,220 @@ class ChatStreamResponseTest(unittest.TestCase):
 
 
 class ChatEventStreamTest(unittest.TestCase):
+    @classmethod
+    def tearDownClass(cls) -> None:
+        asyncio.run(engine.dispose())
+
+    def test_persists_user_and_final_assistant_message_after_stream_done(self) -> None:
+        asyncio.run(self._test_persists_user_and_final_assistant_message_after_stream_done())
+
+    def test_sends_full_history_before_current_message_to_agent(self) -> None:
+        asyncio.run(self._test_sends_full_history_before_current_message_to_agent())
+
+    def test_releases_database_session_before_model_streaming(self) -> None:
+        asyncio.run(self._test_releases_database_session_before_model_streaming())
+
+    async def _test_releases_database_session_before_model_streaming(self) -> None:
+        events: list[str] = []
+        request = ChatStreamRequest.model_validate(
+            {
+                "conversationId": "conversation-session-release",
+                "message": "你好",
+            }
+        )
+        agent = InspectingAgent(
+            [(AIMessageChunk(content="回答"), {"langgraph_node": "model"})],
+            events,
+        )
+
+        with (
+            patch(
+                "service.chat.get_messages_by_conversation_id",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("service.chat.create_message", new=AsyncMock()),
+        ):
+            streamed_events = [
+                event
+                async for event in iter_chat_events_with_persistence(
+                    request,
+                    session_factory=TrackingSessionFactory(events),
+                    agent=agent,
+                    message_id_factory=lambda: "assistant-session-release",
+                    now_factory=lambda: datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+                )
+            ]
+
+        self.assertEqual(
+            streamed_events[-1],
+            {"type": "done", "messageId": "assistant-session-release"},
+        )
+        self.assertEqual(
+            events,
+            [
+                "enter:session-1",
+                "commit:session-1",
+                "exit:session-1",
+                "stream:start",
+                "enter:session-2",
+                "commit:session-2",
+                "exit:session-2",
+            ],
+        )
+
+    async def _test_sends_full_history_before_current_message_to_agent(self) -> None:
+        conversation_id = "conversation-stream-history"
+        agent = FakeAgent([])
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.commit()
+
+            await session.merge(
+                Conversation(
+                    id=conversation_id,
+                    title="History",
+                    created_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+                    updated_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+                )
+            )
+            session.add_all(
+                [
+                    Message(
+                        id="history-user",
+                        conversation_id=conversation_id,
+                        role="user",
+                        content="之前的问题",
+                        reasoning="",
+                        status="done",
+                        created_at=datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+                    ),
+                    Message(
+                        id="history-assistant",
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content="之前的回答",
+                        reasoning="历史推理不进入上下文",
+                        status="done",
+                        created_at=datetime(2026, 6, 5, 12, 2, tzinfo=UTC),
+                    ),
+                ]
+            )
+            await session.commit()
+
+            request = ChatStreamRequest.model_validate(
+                {
+                    "conversationId": conversation_id,
+                    "message": "继续说",
+                }
+            )
+
+            events = [
+                event
+                async for event in iter_chat_events_with_persistence(
+                    request,
+                    session_factory=AsyncSessionLocal,
+                    agent=agent,
+                    message_id_factory=lambda: "assistant-with-history",
+                    now_factory=lambda: datetime(2026, 6, 5, 12, 3, tzinfo=UTC),
+                )
+            ]
+
+            self.assertEqual(events[-1], {"type": "done", "messageId": "assistant-with-history"})
+            self.assertEqual(
+                agent.stream_kwargs,
+                {
+                    "input": {
+                        "messages": [
+                            {"role": "user", "content": "之前的问题"},
+                            {"role": "assistant", "content": "之前的回答"},
+                            {"role": "user", "content": "继续说"},
+                        ]
+                    },
+                    "stream_mode": "messages",
+                },
+            )
+
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.commit()
+
+    async def _test_persists_user_and_final_assistant_message_after_stream_done(
+        self,
+    ) -> None:
+        conversation_id = "conversation-stream-persistence"
+        async with AsyncSessionLocal() as session:
+            await session.merge(
+                Conversation(
+                    id=conversation_id,
+                    title="Stream persistence",
+                    created_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+                    updated_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+                )
+            )
+            await session.commit()
+
+            request = ChatStreamRequest.model_validate(
+                {
+                    "conversationId": conversation_id,
+                    "message": "你好",
+                }
+            )
+            chunks = [
+                (
+                    AIMessageChunk(
+                        content="",
+                        additional_kwargs={"reasoning_content": "先思考。"},
+                    ),
+                    {"langgraph_node": "model"},
+                ),
+                (AIMessageChunk(content="你好"), {"langgraph_node": "model"}),
+                (AIMessageChunk(content="！"), {"langgraph_node": "model"}),
+            ]
+
+            events = [
+                event
+                async for event in iter_chat_events_with_persistence(
+                    request,
+                    session_factory=AsyncSessionLocal,
+                    agent=FakeAgent(chunks),
+                    message_id_factory=lambda: "assistant-persisted",
+                    now_factory=lambda: datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+                )
+            ]
+
+            rows = await session.execute(
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.created_at.asc(), Message.role.desc())
+            )
+            messages = rows.scalars().all()
+
+            self.assertEqual(events[-1], {"type": "done", "messageId": "assistant-persisted"})
+            self.assertEqual([message.role for message in messages], ["user", "assistant"])
+            self.assertEqual(messages[0].content, "你好")
+            self.assertEqual(messages[0].status, "done")
+            self.assertEqual(messages[1].id, "assistant-persisted")
+            self.assertEqual(messages[1].content, "你好！")
+            self.assertEqual(messages[1].reasoning, "先思考。")
+            self.assertEqual(messages[1].status, "done")
+
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.commit()
+
     def test_converts_langchain_stream_to_frontend_event_order(self) -> None:
         chunks = [
             (

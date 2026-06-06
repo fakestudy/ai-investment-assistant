@@ -40,10 +40,14 @@ async function requestJson<T>(
 	return response.json() as Promise<T>;
 }
 
-async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+async function requestVoid(
+	path: string,
+	init?: JsonRequestInit,
+): Promise<void> {
 	const response = await fetch(buildApiUrl(path), {
 		...init,
 		headers: jsonHeaders(init?.headers),
+		body: init?.body === undefined ? undefined : JSON.stringify(init.body),
 	});
 
 	if (!response.ok) {
@@ -52,7 +56,7 @@ async function requestVoid(path: string, init?: RequestInit): Promise<void> {
 }
 
 export function listConversations(): Promise<Conversation[]> {
-	return requestJson<Conversation[]>("/api/conversations");
+	return requestJson<Conversation[]>("/api/conversations/list");
 }
 
 export function createConversation(): Promise<Conversation> {
@@ -66,29 +70,29 @@ export function renameConversation(
 	conversationId: string,
 	title: string,
 ): Promise<Conversation> {
-	return requestJson<Conversation>(
-		`/api/conversations/${encodeURIComponent(conversationId)}`,
-		{
-			method: "PATCH",
-			body: { title },
+	return requestJson<Conversation>("/api/conversation/title/update", {
+		method: "POST",
+		body: {
+			conversation_id: conversationId,
+			title,
 		},
-	);
+	});
 }
 
 export async function deleteConversation(
 	conversationId: string,
 ): Promise<void> {
-	await requestVoid(
-		`/api/conversations/${encodeURIComponent(conversationId)}`,
-		{
-			method: "DELETE",
+	await requestVoid("/api/conversation/delete", {
+		method: "POST",
+		body: {
+			conversation_id: conversationId,
 		},
-	);
+	});
 }
 
 export function listMessages(conversationId: string): Promise<ChatMessage[]> {
 	return requestJson<ChatMessage[]>(
-		`/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+		`/api/conversation/messages/${encodeURIComponent(conversationId)}`,
 	);
 }
 

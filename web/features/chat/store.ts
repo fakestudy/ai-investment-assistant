@@ -26,6 +26,10 @@ import type {
 	ToolInvocation,
 } from "./types";
 
+type LoadConversationsOptions = {
+	force?: boolean;
+};
+
 type ChatState = {
 	conversations: Conversation[];
 	activeConversationId?: string;
@@ -37,7 +41,7 @@ type ChatState = {
 	streamingMessageId?: string;
 	error?: ChatError;
 	abortController?: AbortController;
-	loadConversations: () => Promise<void>;
+	loadConversations: (options?: LoadConversationsOptions) => Promise<void>;
 	createNewConversation: () => Promise<void>;
 	clearActiveConversation: () => void;
 	selectConversation: (conversationId: string) => Promise<void>;
@@ -325,6 +329,7 @@ const startStream = async (
 		await input.connect(abortController.signal, (event) => {
 			set((state) => reduceStreamEvent(state, event, input.conversationId));
 		});
+		await get().loadConversations({ force: true });
 	} catch (error) {
 		if (!abortController.signal.aborted) {
 			const failedMessageId =
@@ -391,7 +396,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	isLoadingMessages: false,
 	isStreaming: false,
 
-	loadConversations: async () => {
+	loadConversations: async (options) => {
+		if (!options?.force && get().conversations.length > 0) {
+			return;
+		}
+
 		set({ isLoadingConversations: true, error: undefined });
 
 		try {

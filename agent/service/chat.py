@@ -1,6 +1,6 @@
 import json
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
@@ -9,10 +9,16 @@ from uuid import uuid4
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langchain_deepseek import ChatDeepSeek
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_tools.deepseek import get_deepseek_balance
 from agent_tools.get_weather import get_weather
+from core.database import AsyncSessionLocal
+from model.message import Message
+from repository.conversation import update_conversation_title
+from repository.message import create_message, get_messages_by_conversation_id
 from schema.chat import ChatStreamRequest
+from middleware.file_system_middleware import file_system_middleware
 
 
 TITLE_MAX_LENGTH = 60
@@ -20,7 +26,11 @@ TITLE_MAX_LENGTH = 60
 
 def get_conversation_title(prompt: str, model: Any | None = None) -> str:
     fallback = _normalize_title(prompt, "New chat")
-    title_model = model or get_model()
+    title_model = model or ChatDeepSeek(
+        model=os.getenv("DEEPSEEK_MODEL_FlASH", "deepseek-v4-flash"),
+        base_url=os.getenv("DEEPSEEK_BASE_URL"),
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+    )
 
     try:
         response = title_model.invoke(
@@ -54,6 +64,7 @@ def get_agent():
     return create_agent(
         model=model,
         tools=[get_weather, get_deepseek_balance],
+        middleware=[file_system_middleware()],
         system_prompt=(
             "You are a helpful assistant. "
             "Only call get_deepseek_balance when the user explicitly asks about "
@@ -75,6 +86,8 @@ def iter_chat_events(
     title_generator: Callable[[str], str] = get_conversation_title,
     message_id_factory: Callable[[], str] = lambda: str(uuid4()),
     now_factory: Callable[[], datetime] = lambda: datetime.now(UTC),
+    input_messages: list[dict[str, str]] | None = None,
+    generated_title: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     assistant_id = message_id_factory()
 
@@ -94,7 +107,8 @@ def iter_chat_events(
         runtime_agent = agent or get_agent()
         stream = runtime_agent.stream(
             input={
-                "messages": [{"role": "user", "content": request.message}],
+                "messages": input_messages
+                or [{"role": "user", "content": request.message}],
             },
             stream_mode="messages",
         )
@@ -102,6 +116,9 @@ def iter_chat_events(
         pending_tool_chunk: AIMessageChunk | None = None
         tool_invocations: dict[str, dict[str, Any]] = {}
         tool_started_at: dict[str, float] = {}
+        title = generated_title
+        if request.generate_title and title is None:
+            title = title_generator(request.message)
 
         for stream_item in stream:
             message = _stream_message(stream_item)
@@ -124,8 +141,7 @@ def iter_chat_events(
 
                 if (
                     pending_tool_chunk is not None
-                    and message.response_metadata.get("finish_reason")
-                    == "tool_calls"
+                    and message.response_metadata.get("finish_reason") == "tool_calls"
                 ):
                     events, invocations, started_at = _tool_call_events(
                         pending_tool_chunk,
@@ -182,10 +198,7 @@ def iter_chat_events(
                 "latencyMs": max(
                     0,
                     int(
-                        (
-                            monotonic()
-                            - tool_started_at.get(tool_call_id, monotonic())
-                        )
+                        (monotonic() - tool_started_at.get(tool_call_id, monotonic()))
                         * 1000
                     ),
                 ),
@@ -211,15 +224,12 @@ def iter_chat_events(
                 "invocation": completed_invocation,
             }
 
-
-        if request.generate_title:
+        if title is not None:
             yield {
                 "type": "title",
                 "conversationId": request.conversation_id,
-                "title": title_generator(request.message),
+                "title": title,
             }
-
-
         yield {"type": "done", "messageId": assistant_id}
     except Exception as exc:
         yield {
@@ -229,9 +239,190 @@ def iter_chat_events(
         }
 
 
-def iter_sse_events(request: ChatStreamRequest) -> Iterator[str]:
-    for event in iter_chat_events(request):
+async def iter_chat_events_with_persistence(
+    request: ChatStreamRequest,
+    *,
+    session_factory: Callable[[], Any] = AsyncSessionLocal,
+    agent: Any | None = None,
+    title_generator: Callable[[str], str] = get_conversation_title,
+    message_id_factory: Callable[[], str] = lambda: str(uuid4()),
+    now_factory: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> AsyncIterator[dict[str, Any]]:
+    input_messages = await _load_history_and_persist_user_message(
+        request=request,
+        session_factory=session_factory,
+        now_factory=now_factory,
+    )
+    generated_title = await _update_conversation_title_for_request(
+        request=request,
+        session_factory=session_factory,
+        title_generator=title_generator,
+    )
+
+    assistant_id: str | None = None
+    assistant_content: list[str] = []
+    assistant_reasoning: list[str] = []
+    assistant_status = "done"
+    assistant_created_at = now_factory()
+
+    for event in iter_chat_events(
+        request,
+        agent=agent,
+        title_generator=title_generator,
+        message_id_factory=message_id_factory,
+        now_factory=now_factory,
+        input_messages=input_messages,
+        generated_title=generated_title,
+    ):
+        event_type = event.get("type")
+        if event_type == "message_created":
+            message = event["message"]
+            assistant_id = message["id"]
+            assistant_created_at = _parse_frontend_datetime(message["createdAt"])
+        elif event_type == "delta":
+            assistant_content.append(event["text"])
+        elif event_type == "reasoning":
+            assistant_reasoning.append(event["text"])
+        elif event_type == "error":
+            assistant_status = "error"
+
+        if event_type in {"done", "error"}:
+            await _persist_assistant_message_with_new_session(
+                session_factory=session_factory,
+                message_id=assistant_id or message_id_factory(),
+                conversation_id=request.conversation_id,
+                content="".join(assistant_content),
+                reasoning="".join(assistant_reasoning),
+                status=assistant_status,
+                created_at=assistant_created_at,
+            )
+
+        yield event
+
+
+async def iter_sse_events(
+    request: ChatStreamRequest,
+) -> AsyncIterator[str]:
+    async for event in iter_chat_events_with_persistence(request):
         yield format_sse_data(event)
+
+
+async def _load_history_and_persist_user_message(
+    *,
+    request: ChatStreamRequest,
+    session_factory: Callable[[], Any],
+    now_factory: Callable[[], datetime],
+) -> list[dict[str, str]]:
+    async with session_factory() as session:
+        try:
+            history_messages = await get_messages_by_conversation_id(
+                session=session,
+                conversation_id=request.conversation_id,
+            )
+            input_messages = _build_agent_messages(history_messages, request.message)
+
+            user_message = Message(
+                id=str(uuid4()),
+                conversation_id=request.conversation_id,
+                role="user",
+                content=request.message,
+                reasoning="",
+                status="done",
+                created_at=now_factory(),
+            )
+            await create_message(session, user_message)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+    return input_messages
+
+
+async def _persist_assistant_message_with_new_session(
+    *,
+    session_factory: Callable[[], Any],
+    message_id: str,
+    conversation_id: str,
+    content: str,
+    reasoning: str,
+    status: str,
+    created_at: datetime,
+) -> None:
+    async with session_factory() as session:
+        try:
+            await _persist_assistant_message(
+                session=session,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                content=content,
+                reasoning=reasoning,
+                status=status,
+                created_at=created_at,
+            )
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def _persist_assistant_message(
+    *,
+    session: AsyncSession,
+    message_id: str,
+    conversation_id: str,
+    content: str,
+    reasoning: str,
+    status: str,
+    created_at: datetime,
+) -> None:
+    assistant_message = Message(
+        id=message_id,
+        conversation_id=conversation_id,
+        role="assistant",
+        content=content,
+        reasoning=reasoning,
+        status=status,
+        created_at=created_at,
+    )
+    await create_message(session, assistant_message)
+    await session.commit()
+
+
+def _build_agent_messages(
+    history_messages: list[Message],
+    current_message: str,
+) -> list[dict[str, str]]:
+    messages = [
+        {"role": message.role, "content": message.content}
+        for message in history_messages
+    ]
+    messages.append({"role": "user", "content": current_message})
+    return messages
+
+
+async def _update_conversation_title_for_request(
+    *,
+    request: ChatStreamRequest,
+    session_factory: Callable[[], Any],
+    title_generator: Callable[[str], str],
+) -> str | None:
+    if not request.generate_title:
+        return None
+
+    title = title_generator(request.message)
+    async with session_factory() as session:
+        try:
+            await update_conversation_title(
+                session=session,
+                conversation_id=request.conversation_id,
+                title=title,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+    return title
 
 
 def _tool_call_events(
@@ -320,3 +511,7 @@ def _normalize_title(value: str, fallback: str) -> str:
 
 def _format_datetime(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _parse_frontend_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))

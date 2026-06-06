@@ -1,5 +1,12 @@
 {
-  "cSpell.words": ["bufbuild", "DEEPSEEK", "dotenv", "Eino", "uvicorn"],
+  "cSpell.words": [
+    "bufbuild",
+    "deepagents",
+    "DEEPSEEK",
+    "dotenv",
+    "Eino",
+    "uvicorn"
+  ],
   "python.defaultInterpreterPath": "${workspaceFolder}/agent/.venv/bin/python",
   "python.terminal.activateEnvironment": false,
   "clang-format.executable": "/opt/homebrew/bin/clang-format",
