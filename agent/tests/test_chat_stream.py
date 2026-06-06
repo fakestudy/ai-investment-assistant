@@ -21,12 +21,11 @@ from service.chat import (
     _persist_tool_result_with_new_session,
     _update_assistant_message_with_new_session,
     format_sse_data,
-    get_agent,
-    get_model,
     get_conversation_title,
     iter_chat_events,
     iter_chat_events_with_persistence,
 )
+from service.agent_factory import build_agent, get_model
 
 
 class FakeAgent:
@@ -145,10 +144,13 @@ class ChatModelTest(unittest.TestCase):
 
     def test_registers_deepseek_balance_tool_for_agent_calls(self) -> None:
         with (
-            patch("service.chat.get_model", return_value=object()) as get_model_mock,
-            patch("service.chat.create_agent", return_value=object()) as create_agent_mock,
+            patch("service.agent_factory.get_model", return_value=object()) as get_model_mock,
+            patch(
+                "service.agent_factory.create_agent",
+                return_value=object(),
+            ) as create_agent_mock,
         ):
-            get_agent()
+            build_agent()
 
         get_model_mock.assert_called_once_with()
         tools = create_agent_mock.call_args.kwargs["tools"]

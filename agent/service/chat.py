@@ -7,12 +7,9 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from langchain.agents import create_agent
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langchain_deepseek import ChatDeepSeek
 
-from agent_tools.deepseek import get_deepseek_balance
-from agent_tools.get_weather import get_weather
 from core.database import AsyncSessionLocal
 from model.message import Message
 from model.message_part import MessagePart
@@ -26,9 +23,7 @@ from repository.message import (
 from repository.message_part import create_message_part, update_message_part_text
 from repository.tool_invocation import create_tool_invocation, update_tool_invocation
 from schema.chat import ChatStreamRequest
-from langchain.agents.middleware import PIIMiddleware
-from schema.context import Context
-from langchain.agents.middleware import HumanInTheLoopMiddleware
+from service.agent_factory import build_agent
 
 # from middleware.file_system_middleware import file_system_middleware
 
@@ -70,56 +65,6 @@ def get_conversation_title(prompt: str, model: Any | None = None) -> str:
     return _normalize_title(_content_text(response.content), fallback)
 
 
-def get_model() -> ChatDeepSeek:
-    return ChatDeepSeek(
-        model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro"),
-        base_url=os.getenv("DEEPSEEK_BASE_URL"),
-        api_key=os.getenv("DEEPSEEK_API_KEY"),
-        reasoning_effort="max",
-        extra_body={"thinking": {"type": "enabled"}},
-    )
-
-
-def get_agent():
-    model = get_model()
-    return create_agent(
-        context_schema=Context,
-        model=model,
-        tools=[get_weather, get_deepseek_balance],
-        # middleware=[file_system_middleware()],
-        middleware=[
-            HumanInTheLoopMiddleware(interrupt_on={"get_weather": True}),
-            PIIMiddleware(
-                pii_type="email",
-                strategy="redact",
-                apply_to_input=True,
-            ),
-            PIIMiddleware(
-                pii_type="credit_card",
-                strategy="mask",
-                apply_to_input=True,
-            ),
-            PIIMiddleware(
-                pii_type="mac_address",
-                strategy="block",
-                apply_to_input=True,
-                apply_to_output=True,
-            ),
-            PIIMiddleware(
-                pii_type="ip",
-                strategy="redact",
-                apply_to_input=True,
-            ),
-        ],
-        system_prompt=(
-            "You are a helpful assistant. "
-            "Only call get_deepseek_balance when the user explicitly asks about "
-            "DeepSeek balance, account balance, remaining quota, or costs. "
-            "Do not query balance during ordinary conversations."
-        ),
-    )
-
-
 def format_sse_data(chunk: object) -> str:
     payload = json.dumps(chunk, ensure_ascii=False)
     return f"data: {payload}\n\n"
@@ -150,7 +95,7 @@ def iter_chat_events(
     }
 
     try:
-        runtime_agent = agent or get_agent()
+        runtime_agent = agent or build_agent()
         stream = runtime_agent.stream(
             input={
                 "messages": input_messages
