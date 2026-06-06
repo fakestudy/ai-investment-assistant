@@ -16,6 +16,10 @@ import_module("model.conversation")
 import_module("model.message")
 import_module("model.tool_invocation")
 import_module("model.message_part")
+import_module("model.agent_run")
+import_module("model.approval")
+import_module("model.agent_run_event")
+import_module("model.outbox_event")
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
