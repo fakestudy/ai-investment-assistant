@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter
 import uvicorn
 from pathlib import Path
-from controller.chat import run_stream_chat
+from controller.chat import resume_stream_chat, run_stream_chat
 from controller.chat_conversations import (
     create_conversation,
     delete_conversation,
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
 
     # chat
     api_router.post("/chat/stream")(run_stream_chat)
+    api_router.post("/chat/stream/resume")(resume_stream_chat)
 
     app.include_router(api_router)
     return app

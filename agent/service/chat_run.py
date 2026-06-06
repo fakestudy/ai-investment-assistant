@@ -8,14 +8,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.agent_run import AgentRun
-from model.agent_run_event import AgentRunEvent
 from model.message import Message
 from model.outbox_event import OutboxEvent
 from repository.agent_run import create_agent_run, get_active_run_by_conversation_id
-from repository.agent_run_event import create_agent_run_event
 from repository.message import create_message
 from repository.outbox_event import create_outbox_event
 from schema.chat import ChatStreamRequest
+from service.run_events import append_run_event
 
 
 class ConversationRunConflict(Exception):
@@ -121,19 +120,16 @@ async def create_chat_run(
         await create_agent_run(session, run)
         outbox_repo = outbox_repository or _DefaultOutboxRepository()
         persisted_outbox = await outbox_repo.create(session, outbox)
-        await create_agent_run_event(
+        await append_run_event(
             session,
-            AgentRunEvent(
-                agent_run_id=run_id,
-                event_type="run_created",
-                payload={
-                    "type": "run_created",
-                    "runId": run_id,
-                    "status": "queued",
-                    "assistantMessageId": assistant_message_id,
-                },
-                created_at=now,
-            ),
+            run_id,
+            "run_created",
+            {
+                "type": "run_created",
+                "runId": run_id,
+                "status": "queued",
+                "assistantMessageId": assistant_message_id,
+            },
         )
     except IntegrityError as exc:
         if "uq_agent_runs_active_conversation" in str(exc.orig):
