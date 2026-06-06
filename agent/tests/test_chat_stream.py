@@ -3,6 +3,7 @@ import json
 import os
 import unittest
 from datetime import UTC, datetime
+from time import sleep
 from unittest.mock import AsyncMock, patch
 
 from langchain_deepseek import ChatDeepSeek
@@ -13,8 +14,12 @@ from sqlalchemy import delete, select
 from core.database import AsyncSessionLocal, engine
 from model.conversation import Conversation
 from model.message import Message
+from model.message_part import MessagePart
+from model.tool_invocation import ToolInvocation
 from schema.chat import ChatStreamRequest, ChatStreamResponse
 from service.chat import (
+    _persist_tool_result_with_new_session,
+    _update_assistant_message_with_new_session,
     format_sse_data,
     get_agent,
     get_model,
@@ -32,6 +37,25 @@ class FakeAgent:
     def stream(self, **kwargs: object):
         self.stream_kwargs = kwargs
         return iter(self.chunks)
+
+
+class FailingStreamAgent(FakeAgent):
+    def __init__(
+        self,
+        chunks: list[tuple[object, dict[str, object]]],
+        error: Exception,
+    ) -> None:
+        super().__init__(chunks)
+        self.error = error
+
+    def stream(self, **kwargs: object):
+        self.stream_kwargs = kwargs
+
+        def iterator():
+            yield from self.chunks
+            raise self.error
+
+        return iterator()
 
 
 class StaticModel:
@@ -238,6 +262,465 @@ class ChatEventStreamTest(unittest.TestCase):
     def test_releases_database_session_before_model_streaming(self) -> None:
         asyncio.run(self._test_releases_database_session_before_model_streaming())
 
+    def test_starts_model_stream_before_title_generation_finishes(self) -> None:
+        asyncio.run(self._test_starts_model_stream_before_title_generation_finishes())
+
+    def test_persists_tool_invocation_and_timeline_parts(self) -> None:
+        asyncio.run(self._test_persists_tool_invocation_and_timeline_parts())
+
+    def test_marks_unfinished_tool_invocations_error_when_stream_errors(self) -> None:
+        asyncio.run(
+            self._test_marks_unfinished_tool_invocations_error_when_stream_errors()
+        )
+
+    def test_persists_assistant_as_streaming_before_final_update(self) -> None:
+        asyncio.run(self._test_persists_assistant_as_streaming_before_final_update())
+
+    def test_aggregates_continuous_reasoning_parts(self) -> None:
+        asyncio.run(self._test_aggregates_continuous_reasoning_parts())
+
+    def test_raises_when_final_assistant_update_misses_message(self) -> None:
+        asyncio.run(self._test_raises_when_final_assistant_update_misses_message())
+
+    def test_yields_error_when_final_assistant_update_fails(self) -> None:
+        asyncio.run(self._test_yields_error_when_final_assistant_update_fails())
+
+    def test_raises_when_tool_result_update_misses_invocation(self) -> None:
+        asyncio.run(self._test_raises_when_tool_result_update_misses_invocation())
+
+    async def _test_raises_when_final_assistant_update_misses_message(self) -> None:
+        events: list[str] = []
+
+        with patch("service.chat.update_message", new=AsyncMock(return_value=None)):
+            with self.assertRaisesRegex(RuntimeError, "Assistant message not found"):
+                await _update_assistant_message_with_new_session(
+                    session_factory=TrackingSessionFactory(events),
+                    message_id="missing-assistant",
+                    content="answer",
+                    reasoning="thinking",
+                    status="done",
+                )
+
+        self.assertEqual(
+            events,
+            ["enter:session-1", "rollback:session-1", "exit:session-1"],
+        )
+
+    async def _test_raises_when_tool_result_update_misses_invocation(self) -> None:
+        events: list[str] = []
+
+        with patch("service.chat.update_tool_invocation", new=AsyncMock(return_value=None)):
+            with self.assertRaisesRegex(RuntimeError, "Tool invocation not found"):
+                await _persist_tool_result_with_new_session(
+                    session_factory=TrackingSessionFactory(events),
+                    invocation={
+                        "id": "missing-tool-call",
+                        "status": "completed",
+                        "result": "result",
+                        "latencyMs": 1,
+                    },
+                )
+
+        self.assertEqual(
+            events,
+            ["enter:session-1", "rollback:session-1", "exit:session-1"],
+        )
+
+    async def _test_yields_error_when_final_assistant_update_fails(self) -> None:
+        request = ChatStreamRequest.model_validate(
+            {
+                "conversationId": "conversation-final-update-error-event",
+                "message": "你好",
+            }
+        )
+
+        with (
+            patch(
+                "service.chat.get_messages_by_conversation_id",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("service.chat.create_message", new=AsyncMock()),
+            patch("service.chat.update_message", new=AsyncMock(return_value=None)),
+        ):
+            events = [
+                event
+                async for event in iter_chat_events_with_persistence(
+                    request,
+                    session_factory=TrackingSessionFactory([]),
+                    agent=FakeAgent(
+                        [(AIMessageChunk(content="回答"), {"langgraph_node": "model"})]
+                    ),
+                    message_id_factory=lambda: "assistant-final-update-error-event",
+                    now_factory=lambda: datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+                )
+            ]
+
+        self.assertEqual(
+            events[-1],
+            {
+                "type": "error",
+                "messageId": "assistant-final-update-error-event",
+                "message": (
+                    "Failed to persist assistant message: "
+                    "Assistant message not found: assistant-final-update-error-event"
+                ),
+            },
+        )
+
+    async def _test_persists_assistant_as_streaming_before_final_update(self) -> None:
+        request = ChatStreamRequest.model_validate(
+            {
+                "conversationId": "conversation-streaming-order",
+                "message": "你好",
+            }
+        )
+        call_order: list[str] = []
+
+        async def create_message_spy(_: object, message: Message) -> Message:
+            call_order.append(f"create:{message.role}:{message.status}")
+            return message
+
+        async def update_message_spy(**kwargs: object) -> object:
+            call_order.append(f"update:{kwargs['status']}")
+            return object()
+
+        with (
+            patch(
+                "service.chat.get_messages_by_conversation_id",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("service.chat.create_message", new=create_message_spy),
+            patch("service.chat.update_message", new=update_message_spy, create=True),
+        ):
+            events = [
+                event
+                async for event in iter_chat_events_with_persistence(
+                    request,
+                    session_factory=TrackingSessionFactory([]),
+                    agent=FakeAgent(
+                        [(AIMessageChunk(content="你好"), {"langgraph_node": "model"})]
+                    ),
+                    message_id_factory=lambda: "assistant-streaming-order",
+                    now_factory=lambda: datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+                )
+            ]
+
+        self.assertEqual(
+            events[-1],
+            {"type": "done", "messageId": "assistant-streaming-order"},
+        )
+        self.assertEqual(
+            call_order,
+            ["create:user:done", "create:assistant:streaming", "update:done"],
+        )
+
+    async def _test_aggregates_continuous_reasoning_parts(self) -> None:
+        conversation_id = "conversation-reasoning-aggregation"
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.merge(
+                Conversation(
+                    id=conversation_id,
+                    title="Reasoning aggregation",
+                    created_at=datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+                    updated_at=datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+                )
+            )
+            await session.commit()
+
+        request = ChatStreamRequest.model_validate(
+            {"conversationId": conversation_id, "message": "解释一下"}
+        )
+        chunks = [
+            (
+                AIMessageChunk(
+                    content="",
+                    additional_kwargs={"reasoning_content": "第一段"},
+                ),
+                {"langgraph_node": "model"},
+            ),
+            (
+                AIMessageChunk(
+                    content="",
+                    additional_kwargs={"reasoning_content": "第二段"},
+                ),
+                {"langgraph_node": "model"},
+            ),
+            (AIMessageChunk(content="答案"), {"langgraph_node": "model"}),
+        ]
+
+        events = [
+            event
+            async for event in iter_chat_events_with_persistence(
+                request,
+                session_factory=AsyncSessionLocal,
+                agent=FakeAgent(chunks),
+                message_id_factory=lambda: "assistant-reasoning-aggregation",
+                now_factory=lambda: datetime(2026, 6, 6, 12, 1, tzinfo=UTC),
+            )
+        ]
+
+        async with AsyncSessionLocal() as session:
+            part_rows = await session.execute(
+                select(MessagePart).where(
+                    MessagePart.message_id == "assistant-reasoning-aggregation"
+                )
+            )
+            parts = part_rows.scalars().all()
+
+            self.assertEqual(
+                events[-1],
+                {"type": "done", "messageId": "assistant-reasoning-aggregation"},
+            )
+            self.assertEqual(len(parts), 1)
+            self.assertEqual(parts[0].type, "reasoning")
+            self.assertEqual(parts[0].text, "第一段第二段")
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.commit()
+
+    async def _test_persists_tool_invocation_and_timeline_parts(self) -> None:
+        conversation_id = "conversation-tool-persistence"
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.merge(
+                Conversation(
+                    id=conversation_id,
+                    title="Tool persistence",
+                    created_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+                    updated_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+                )
+            )
+            await session.commit()
+
+        request = ChatStreamRequest.model_validate(
+            {"conversationId": conversation_id, "message": "查天气"}
+        )
+        chunks = [
+            (
+                AIMessageChunk(
+                    content="",
+                    additional_kwargs={"reasoning_content": "先查工具。"},
+                ),
+                {"langgraph_node": "model"},
+            ),
+            (
+                AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[
+                        {
+                            "name": "get_weather",
+                            "args": '{"city":"北京"}',
+                            "id": "call-weather-persisted",
+                            "index": 0,
+                            "type": "tool_call_chunk",
+                        }
+                    ],
+                    response_metadata={"finish_reason": "tool_calls"},
+                ),
+                {"langgraph_node": "model"},
+            ),
+            (
+                ToolMessage(
+                    content='{"weather":"sunny"}',
+                    name="get_weather",
+                    tool_call_id="call-weather-persisted",
+                ),
+                {"langgraph_node": "tools"},
+            ),
+            (AIMessageChunk(content="今天晴。"), {"langgraph_node": "model"}),
+        ]
+
+        events = [
+            event
+            async for event in iter_chat_events_with_persistence(
+                request,
+                session_factory=AsyncSessionLocal,
+                agent=FakeAgent(chunks),
+                message_id_factory=lambda: "assistant-tool-persisted",
+                now_factory=lambda: datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+            )
+        ]
+
+        async with AsyncSessionLocal() as session:
+            invocation_rows = await session.execute(
+                select(ToolInvocation).where(
+                    ToolInvocation.message_id == "assistant-tool-persisted"
+                )
+            )
+            invocations = invocation_rows.scalars().all()
+            part_rows = await session.execute(
+                select(MessagePart)
+                .where(MessagePart.message_id == "assistant-tool-persisted")
+                .order_by(MessagePart.order_index.asc())
+            )
+            parts = part_rows.scalars().all()
+
+            self.assertEqual(
+                events[-1],
+                {"type": "done", "messageId": "assistant-tool-persisted"},
+            )
+            self.assertEqual(len(invocations), 1)
+            self.assertEqual(invocations[0].id, "call-weather-persisted")
+            self.assertEqual(invocations[0].tool_name, "get_weather")
+            self.assertEqual(invocations[0].args, {"city": "北京"})
+            self.assertEqual(invocations[0].result, '{"weather":"sunny"}')
+            self.assertEqual(invocations[0].status, "completed")
+            self.assertEqual([part.type for part in parts], ["reasoning", "tool"])
+            self.assertEqual(parts[0].text, "先查工具。")
+            self.assertEqual(parts[1].tool_invocation_id, "call-weather-persisted")
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.commit()
+
+    async def _test_marks_unfinished_tool_invocations_error_when_stream_errors(
+        self,
+    ) -> None:
+        conversation_id = "conversation-tool-error-persistence"
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.merge(
+                Conversation(
+                    id=conversation_id,
+                    title="Tool error persistence",
+                    created_at=datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+                    updated_at=datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+                )
+            )
+            await session.commit()
+
+        request = ChatStreamRequest.model_validate(
+            {"conversationId": conversation_id, "message": "查天气"}
+        )
+        chunks = [
+            (
+                AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[
+                        {
+                            "name": "get_weather",
+                            "args": '{"city":"北京"}',
+                            "id": "call-weather-stream-error",
+                            "index": 0,
+                            "type": "tool_call_chunk",
+                        }
+                    ],
+                    response_metadata={"finish_reason": "tool_calls"},
+                ),
+                {"langgraph_node": "model"},
+            ),
+        ]
+
+        events = [
+            event
+            async for event in iter_chat_events_with_persistence(
+                request,
+                session_factory=AsyncSessionLocal,
+                agent=FailingStreamAgent(chunks, RuntimeError("model stream failed")),
+                message_id_factory=lambda: "assistant-tool-stream-error",
+                now_factory=lambda: datetime(2026, 6, 6, 12, 1, tzinfo=UTC),
+            )
+        ]
+
+        async with AsyncSessionLocal() as session:
+            invocation = await session.get(
+                ToolInvocation,
+                "call-weather-stream-error",
+            )
+
+            self.assertEqual(events[-1]["type"], "error")
+            self.assertIsNotNone(invocation)
+            assert invocation is not None
+            self.assertEqual(invocation.status, "error")
+            self.assertEqual(invocation.error, "model stream failed")
+            self.assertIsNone(invocation.result)
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(Message).where(Message.conversation_id == conversation_id)
+            )
+            await session.execute(
+                delete(Conversation).where(Conversation.id == conversation_id)
+            )
+            await session.commit()
+
+    async def _test_starts_model_stream_before_title_generation_finishes(self) -> None:
+        events: list[str] = []
+        request = ChatStreamRequest.model_validate(
+            {
+                "conversationId": "conversation-non-blocking-title",
+                "message": "你好",
+                "generateTitle": True,
+            }
+        )
+
+        def slow_title_generator(_: str) -> str:
+            events.append("title:start")
+            sleep(0.05)
+            events.append("title:end")
+            return "问候"
+
+        with (
+            patch(
+                "service.chat.get_messages_by_conversation_id",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("service.chat.create_message", new=AsyncMock()),
+            patch("service.chat.update_message", new=AsyncMock()),
+            patch("service.chat.update_conversation_title", new=AsyncMock()),
+        ):
+            streamed_events = [
+                event
+                async for event in iter_chat_events_with_persistence(
+                    request,
+                    session_factory=TrackingSessionFactory(events),
+                    agent=InspectingAgent([], events),
+                    title_generator=slow_title_generator,
+                    message_id_factory=lambda: "assistant-non-blocking-title",
+                    now_factory=lambda: datetime(2026, 6, 6, 12, 0, tzinfo=UTC),
+                )
+            ]
+
+        self.assertLess(events.index("stream:start"), events.index("title:end"))
+        self.assertEqual(
+            streamed_events[-2:],
+            [
+                {
+                    "type": "title",
+                    "conversationId": "conversation-non-blocking-title",
+                    "title": "问候",
+                },
+                {"type": "done", "messageId": "assistant-non-blocking-title"},
+            ],
+        )
+
     async def _test_releases_database_session_before_model_streaming(self) -> None:
         events: list[str] = []
         request = ChatStreamRequest.model_validate(
@@ -257,6 +740,7 @@ class ChatEventStreamTest(unittest.TestCase):
                 new=AsyncMock(return_value=[]),
             ),
             patch("service.chat.create_message", new=AsyncMock()),
+            patch("service.chat.update_message", new=AsyncMock()),
         ):
             streamed_events = [
                 event
@@ -279,10 +763,13 @@ class ChatEventStreamTest(unittest.TestCase):
                 "enter:session-1",
                 "commit:session-1",
                 "exit:session-1",
-                "stream:start",
                 "enter:session-2",
                 "commit:session-2",
                 "exit:session-2",
+                "stream:start",
+                "enter:session-3",
+                "commit:session-3",
+                "exit:session-3",
             ],
         )
 
@@ -325,6 +812,33 @@ class ChatEventStreamTest(unittest.TestCase):
                         reasoning="历史推理不进入上下文",
                         status="done",
                         created_at=datetime(2026, 6, 5, 12, 2, tzinfo=UTC),
+                    ),
+                    Message(
+                        id="history-user-streaming",
+                        conversation_id=conversation_id,
+                        role="user",
+                        content="未完成的问题",
+                        reasoning="",
+                        status="streaming",
+                        created_at=datetime(2026, 6, 5, 12, 3, tzinfo=UTC),
+                    ),
+                    Message(
+                        id="history-assistant-error",
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content="失败的回答",
+                        reasoning="",
+                        status="error",
+                        created_at=datetime(2026, 6, 5, 12, 4, tzinfo=UTC),
+                    ),
+                    Message(
+                        id="history-system-done",
+                        conversation_id=conversation_id,
+                        role="system",
+                        content="系统消息不进入上下文",
+                        reasoning="",
+                        status="done",
+                        created_at=datetime(2026, 6, 5, 12, 5, tzinfo=UTC),
                     ),
                 ]
             )

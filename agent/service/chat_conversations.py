@@ -13,7 +13,16 @@ from repository.conversation import (
     update_conversation_title,
 )
 from repository.message import get_messages_by_conversation_id
-from schema.chat import ChatMessage
+from model.message import Message
+from model.message_part import MessagePart
+from model.tool_invocation import ToolInvocation
+from schema.chat import (
+    ChatMessage,
+    ReasoningTimelinePart,
+    ToolInvocation as ToolInvocationSchema,
+    ToolTimelinePart,
+    ChatTimelinePart,
+)
 from schema.chat_conversations import ChatConversation
 
 
@@ -106,18 +115,67 @@ async def get_conversation_messages(
         conversation_id=conversation_id,
     )
 
-    return [
-        ChatMessage(
-            id=message.id,
-            conversation_id=message.conversation_id,
-            role=message.role,
-            content=message.content,
-            reasoning=message.reasoning,
-            status=message.status,
-            created_at=message.created_at.isoformat(),
+    return [_to_chat_message(message) for message in messages]
+
+
+def _to_tool_invocation(invocation: ToolInvocation) -> ToolInvocationSchema:
+    return ToolInvocationSchema(
+        id=invocation.id,
+        message_id=invocation.message_id,
+        tool_name=invocation.tool_name,
+        args=invocation.args,
+        result=invocation.result,
+        error=invocation.error,
+        latency_ms=invocation.latency_ms,
+        status=invocation.status,
+        created_at=invocation.created_at.isoformat(),
+    )
+
+
+def _to_timeline_part(part: MessagePart) -> ChatTimelinePart | None:
+    if part.type == "tool" and part.tool_invocation is not None:
+        return ToolTimelinePart(
+            id=part.id,
+            type="tool",
+            order_index=part.order_index,
+            invocation=_to_tool_invocation(part.tool_invocation),
         )
-        for message in messages
-    ]
+    if part.type == "tool":
+        return None
+
+    return ReasoningTimelinePart(
+        id=part.id,
+        type="reasoning",
+        order_index=part.order_index,
+        text=part.text,
+    )
+
+
+def _to_chat_message(message: Message) -> ChatMessage:
+    tool_invocations = sorted(
+        message.tool_invocations,
+        key=lambda invocation: (invocation.created_at, invocation.id),
+    )
+    timeline_parts = sorted(
+        message.timeline_parts,
+        key=lambda part: (part.order_index, part.id),
+    )
+
+    return ChatMessage(
+        id=message.id,
+        conversation_id=message.conversation_id,
+        role=message.role,
+        content=message.content,
+        reasoning=message.reasoning,
+        tool_invocations=[_to_tool_invocation(item) for item in tool_invocations],
+        timeline_parts=[
+            item
+            for item in (_to_timeline_part(part) for part in timeline_parts)
+            if item is not None
+        ],
+        status=message.status,
+        created_at=message.created_at.isoformat(),
+    )
 
 
 def _to_chat_conversation(conversation: Conversation) -> ChatConversation:

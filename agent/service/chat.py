@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -9,25 +10,45 @@ from uuid import uuid4
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langchain_deepseek import ChatDeepSeek
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_tools.deepseek import get_deepseek_balance
 from agent_tools.get_weather import get_weather
 from core.database import AsyncSessionLocal
 from model.message import Message
+from model.message_part import MessagePart
+from model.tool_invocation import ToolInvocation
 from repository.conversation import update_conversation_title
-from repository.message import create_message, get_messages_by_conversation_id
+from repository.message import (
+    create_message,
+    get_messages_by_conversation_id,
+    update_message,
+)
+from repository.message_part import create_message_part, update_message_part_text
+from repository.tool_invocation import create_tool_invocation, update_tool_invocation
 from schema.chat import ChatStreamRequest
-from middleware.file_system_middleware import file_system_middleware
+from langchain.agents.middleware import PIIMiddleware
+from schema.context import Context
+from langchain.agents.middleware import HumanInTheLoopMiddleware
+
+# from middleware.file_system_middleware import file_system_middleware
 
 
 TITLE_MAX_LENGTH = 60
+_TITLE_NOT_GENERATED = object()
+
+
+class TimelineState:
+    def __init__(self) -> None:
+        self.next_order_index = 0
+        self.last_part_id: str | None = None
+        self.last_part_type: str | None = None
+        self.last_part_text = ""
 
 
 def get_conversation_title(prompt: str, model: Any | None = None) -> str:
     fallback = _normalize_title(prompt, "New chat")
     title_model = model or ChatDeepSeek(
-        model=os.getenv("DEEPSEEK_MODEL_FlASH", "deepseek-v4-flash"),
+        model=os.getenv("DEEPSEEK_MODEL_FLASH", "deepseek-v4-flash"),
         base_url=os.getenv("DEEPSEEK_BASE_URL"),
         api_key=os.getenv("DEEPSEEK_API_KEY"),
     )
@@ -62,9 +83,34 @@ def get_model() -> ChatDeepSeek:
 def get_agent():
     model = get_model()
     return create_agent(
+        context_schema=Context,
         model=model,
         tools=[get_weather, get_deepseek_balance],
-        middleware=[file_system_middleware()],
+        # middleware=[file_system_middleware()],
+        middleware=[
+            HumanInTheLoopMiddleware(interrupt_on={"get_weather": True}),
+            PIIMiddleware(
+                pii_type="email",
+                strategy="redact",
+                apply_to_input=True,
+            ),
+            PIIMiddleware(
+                pii_type="credit_card",
+                strategy="mask",
+                apply_to_input=True,
+            ),
+            PIIMiddleware(
+                pii_type="mac_address",
+                strategy="block",
+                apply_to_input=True,
+                apply_to_output=True,
+            ),
+            PIIMiddleware(
+                pii_type="ip",
+                strategy="redact",
+                apply_to_input=True,
+            ),
+        ],
         system_prompt=(
             "You are a helpful assistant. "
             "Only call get_deepseek_balance when the user explicitly asks about "
@@ -87,7 +133,7 @@ def iter_chat_events(
     message_id_factory: Callable[[], str] = lambda: str(uuid4()),
     now_factory: Callable[[], datetime] = lambda: datetime.now(UTC),
     input_messages: list[dict[str, str]] | None = None,
-    generated_title: str | None = None,
+    generated_title: str | None | object = _TITLE_NOT_GENERATED,
 ) -> Iterator[dict[str, Any]]:
     assistant_id = message_id_factory()
 
@@ -116,9 +162,10 @@ def iter_chat_events(
         pending_tool_chunk: AIMessageChunk | None = None
         tool_invocations: dict[str, dict[str, Any]] = {}
         tool_started_at: dict[str, float] = {}
-        title = generated_title
-        if request.generate_title and title is None:
-            title = title_generator(request.message)
+        if generated_title is _TITLE_NOT_GENERATED:
+            title = title_generator(request.message) if request.generate_title else None
+        else:
+            title = generated_title
 
         for stream_item in stream:
             message = _stream_message(stream_item)
@@ -253,51 +300,109 @@ async def iter_chat_events_with_persistence(
         session_factory=session_factory,
         now_factory=now_factory,
     )
-    generated_title = await _update_conversation_title_for_request(
-        request=request,
-        session_factory=session_factory,
-        title_generator=title_generator,
-    )
+    title_task: asyncio.Task[str | None] | None = None
+    if request.generate_title:
+        title_task = asyncio.create_task(
+            _update_conversation_title_for_request(
+                request=request,
+                session_factory=session_factory,
+                title_generator=title_generator,
+            )
+        )
 
     assistant_id: str | None = None
     assistant_content: list[str] = []
     assistant_reasoning: list[str] = []
     assistant_status = "done"
-    assistant_created_at = now_factory()
+    timeline_state = TimelineState()
+    pending_tool_invocation_ids: set[str] = set()
 
-    for event in iter_chat_events(
-        request,
-        agent=agent,
-        title_generator=title_generator,
-        message_id_factory=message_id_factory,
-        now_factory=now_factory,
-        input_messages=input_messages,
-        generated_title=generated_title,
-    ):
-        event_type = event.get("type")
-        if event_type == "message_created":
-            message = event["message"]
-            assistant_id = message["id"]
-            assistant_created_at = _parse_frontend_datetime(message["createdAt"])
-        elif event_type == "delta":
-            assistant_content.append(event["text"])
-        elif event_type == "reasoning":
-            assistant_reasoning.append(event["text"])
-        elif event_type == "error":
-            assistant_status = "error"
+    try:
+        for event in iter_chat_events(
+            request,
+            agent=agent,
+            title_generator=title_generator,
+            message_id_factory=message_id_factory,
+            now_factory=now_factory,
+            input_messages=input_messages,
+            generated_title=None,
+        ):
+            event_type = event.get("type")
+            if event_type == "message_created":
+                message = event["message"]
+                assistant_id = message["id"]
+                await _create_assistant_message_with_new_session(
+                    session_factory=session_factory,
+                    message_id=assistant_id,
+                    conversation_id=request.conversation_id,
+                    created_at=_parse_frontend_datetime(message["createdAt"]),
+                )
+            elif event_type == "delta":
+                assistant_content.append(event["text"])
+            elif event_type == "reasoning":
+                assistant_reasoning.append(event["text"])
+                await _persist_reasoning_part_with_new_session(
+                    session_factory=session_factory,
+                    message_id=assistant_id,
+                    text=event["text"],
+                    now_factory=now_factory,
+                    timeline_state=timeline_state,
+                )
+            elif event_type == "tool_call":
+                await _persist_tool_call_with_new_session(
+                    session_factory=session_factory,
+                    invocation=event["invocation"],
+                    now_factory=now_factory,
+                    timeline_state=timeline_state,
+                )
+                pending_tool_invocation_ids.add(event["invocation"]["id"])
+            elif event_type == "tool_result":
+                await _persist_tool_result_with_new_session(
+                    session_factory=session_factory,
+                    invocation=event["invocation"],
+                )
+                pending_tool_invocation_ids.discard(event["invocation"]["id"])
+            elif event_type == "error":
+                assistant_status = "error"
+                await _mark_unfinished_tool_invocations_error_with_new_session(
+                    session_factory=session_factory,
+                    invocation_ids=pending_tool_invocation_ids,
+                    error=event.get("message") or "Stream failed",
+                )
+                pending_tool_invocation_ids.clear()
 
-        if event_type in {"done", "error"}:
-            await _persist_assistant_message_with_new_session(
-                session_factory=session_factory,
-                message_id=assistant_id or message_id_factory(),
-                conversation_id=request.conversation_id,
-                content="".join(assistant_content),
-                reasoning="".join(assistant_reasoning),
-                status=assistant_status,
-                created_at=assistant_created_at,
-            )
+            if event_type in {"done", "error"}:
+                try:
+                    await _update_assistant_message_with_new_session(
+                        session_factory=session_factory,
+                        message_id=assistant_id or message_id_factory(),
+                        content="".join(assistant_content),
+                        reasoning="".join(assistant_reasoning),
+                        status=assistant_status,
+                    )
+                except Exception as exc:
+                    yield {
+                        "type": "error",
+                        "messageId": assistant_id or "",
+                        "message": f"Failed to persist assistant message: {exc}",
+                    }
+                    continue
 
-        yield event
+            if event_type == "done" and title_task is not None:
+                title = await _get_title_task_result(title_task)
+                title_task = None
+                if title is not None:
+                    yield {
+                        "type": "title",
+                        "conversationId": request.conversation_id,
+                        "title": title,
+                    }
+
+            yield event
+    finally:
+        if title_task is not None:
+            title_task.cancel()
+            await asyncio.gather(title_task, return_exceptions=True)
 
 
 async def iter_sse_events(
@@ -339,53 +444,196 @@ async def _load_history_and_persist_user_message(
     return input_messages
 
 
-async def _persist_assistant_message_with_new_session(
+async def _create_assistant_message_with_new_session(
     *,
     session_factory: Callable[[], Any],
     message_id: str,
     conversation_id: str,
-    content: str,
-    reasoning: str,
-    status: str,
     created_at: datetime,
 ) -> None:
     async with session_factory() as session:
         try:
-            await _persist_assistant_message(
-                session=session,
-                message_id=message_id,
-                conversation_id=conversation_id,
-                content=content,
-                reasoning=reasoning,
-                status=status,
-                created_at=created_at,
+            await create_message(
+                session,
+                Message(
+                    id=message_id,
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content="",
+                    reasoning="",
+                    status="streaming",
+                    created_at=created_at,
+                ),
             )
+            await session.commit()
         except Exception:
             await session.rollback()
             raise
 
 
-async def _persist_assistant_message(
+async def _update_assistant_message_with_new_session(
     *,
-    session: AsyncSession,
+    session_factory: Callable[[], Any],
     message_id: str,
-    conversation_id: str,
     content: str,
     reasoning: str,
     status: str,
-    created_at: datetime,
 ) -> None:
-    assistant_message = Message(
-        id=message_id,
-        conversation_id=conversation_id,
-        role="assistant",
-        content=content,
-        reasoning=reasoning,
-        status=status,
-        created_at=created_at,
-    )
-    await create_message(session, assistant_message)
-    await session.commit()
+    async with session_factory() as session:
+        try:
+            updated_message = await update_message(
+                session=session,
+                message_id=message_id,
+                content=content,
+                reasoning=reasoning,
+                status=status,
+            )
+            if updated_message is None:
+                raise RuntimeError(f"Assistant message not found: {message_id}")
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def _persist_tool_call_with_new_session(
+    *,
+    session_factory: Callable[[], Any],
+    invocation: dict[str, Any],
+    now_factory: Callable[[], datetime],
+    timeline_state: TimelineState,
+) -> None:
+    async with session_factory() as session:
+        try:
+            persisted = await create_tool_invocation(
+                session,
+                ToolInvocation(
+                    id=invocation["id"],
+                    message_id=invocation["messageId"],
+                    tool_name=invocation["toolName"],
+                    args=invocation.get("args") or {},
+                    result=None,
+                    error=None,
+                    latency_ms=None,
+                    status="running",
+                    created_at=now_factory(),
+                ),
+            )
+            await create_message_part(
+                session,
+                MessagePart(
+                    id=str(uuid4()),
+                    message_id=persisted.message_id,
+                    type="tool",
+                    order_index=timeline_state.next_order_index,
+                    text="",
+                    tool_invocation_id=persisted.id,
+                    created_at=now_factory(),
+                ),
+            )
+            timeline_state.next_order_index += 1
+            timeline_state.last_part_id = None
+            timeline_state.last_part_type = "tool"
+            timeline_state.last_part_text = ""
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def _persist_tool_result_with_new_session(
+    *,
+    session_factory: Callable[[], Any],
+    invocation: dict[str, Any],
+) -> None:
+    async with session_factory() as session:
+        try:
+            updated_invocation = await update_tool_invocation(
+                session=session,
+                invocation_id=invocation["id"],
+                result=invocation.get("result"),
+                error=invocation.get("error"),
+                latency_ms=invocation.get("latencyMs"),
+                status=invocation["status"],
+            )
+            if updated_invocation is None:
+                raise RuntimeError(f"Tool invocation not found: {invocation['id']}")
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def _mark_unfinished_tool_invocations_error_with_new_session(
+    *,
+    session_factory: Callable[[], Any],
+    invocation_ids: set[str],
+    error: str,
+) -> None:
+    if not invocation_ids:
+        return
+
+    async with session_factory() as session:
+        try:
+            for invocation_id in invocation_ids:
+                await update_tool_invocation(
+                    session=session,
+                    invocation_id=invocation_id,
+                    result=None,
+                    error=error,
+                    latency_ms=None,
+                    status="error",
+                )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def _persist_reasoning_part_with_new_session(
+    *,
+    session_factory: Callable[[], Any],
+    message_id: str | None,
+    text: str,
+    now_factory: Callable[[], datetime],
+    timeline_state: TimelineState,
+) -> None:
+    if message_id is None or text == "":
+        return
+
+    async with session_factory() as session:
+        try:
+            if (
+                timeline_state.last_part_type == "reasoning"
+                and timeline_state.last_part_id
+            ):
+                timeline_state.last_part_text += text
+                await update_message_part_text(
+                    session=session,
+                    part_id=timeline_state.last_part_id,
+                    text=timeline_state.last_part_text,
+                )
+            else:
+                part = await create_message_part(
+                    session,
+                    MessagePart(
+                        id=str(uuid4()),
+                        message_id=message_id,
+                        type="reasoning",
+                        order_index=timeline_state.next_order_index,
+                        text=text,
+                        tool_invocation_id=None,
+                        created_at=now_factory(),
+                    ),
+                )
+                timeline_state.next_order_index += 1
+                timeline_state.last_part_id = part.id
+                timeline_state.last_part_type = "reasoning"
+                timeline_state.last_part_text = text
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 def _build_agent_messages(
@@ -395,6 +643,7 @@ def _build_agent_messages(
     messages = [
         {"role": message.role, "content": message.content}
         for message in history_messages
+        if message.status == "done" and message.role in {"user", "assistant"}
     ]
     messages.append({"role": "user", "content": current_message})
     return messages
@@ -409,7 +658,7 @@ async def _update_conversation_title_for_request(
     if not request.generate_title:
         return None
 
-    title = title_generator(request.message)
+    title = await asyncio.to_thread(title_generator, request.message)
     async with session_factory() as session:
         try:
             await update_conversation_title(
@@ -423,6 +672,15 @@ async def _update_conversation_title_for_request(
             raise
 
     return title
+
+
+async def _get_title_task_result(
+    title_task: asyncio.Task[str | None],
+) -> str | None:
+    try:
+        return await title_task
+    except Exception:
+        return None
 
 
 def _tool_call_events(
