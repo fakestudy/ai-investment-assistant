@@ -2,6 +2,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schema.chat import ConversationMessagesResponse
+
+__all__ = [
+    "ChatConversation",
+    "ConversationMessagesResponse",
+    "DeleteConversationRequest",
+    "DeleteConversationResponse",
+    "UpdateConversationTitleRequest",
+]
+
 
 class ChatConversation(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
