@@ -48,6 +48,14 @@ assert_file_not_exists() {
   fi
 }
 
+assert_file_exists() {
+  local file="$1" message="$2"
+  if [[ ! -f "$file" ]]; then
+    echo "FAIL: $message" >&2
+    exit 1
+  fi
+}
+
 assert_fails() {
   local message="$1"
   shift
@@ -62,6 +70,18 @@ assert_agent_failure_exits() {
   block="$(awk '/agent 启动失败/{ print; getline; print }' "$REPO_ROOT/scripts/dev-start.sh")"
   if [[ "$block" != *"exit 1"* ]]; then
     echo "FAIL: dev-start.sh must exit before printing success when agent fails" >&2
+    exit 1
+  fi
+}
+
+assert_health_failure_exits() {
+  local label="$1"
+  local block
+  block="$(awk -v pattern="$label 健康检查未通过" '
+    index($0, pattern) { print; getline; print }
+  ' "$REPO_ROOT/scripts/dev-start.sh")"
+  if [[ "$block" != *"exit 1"* ]]; then
+    echo "FAIL: dev-start.sh must exit when $label health check fails" >&2
     exit 1
   fi
 }
@@ -112,7 +132,12 @@ if [[ "${FAKE_WEB_MODE:-success}" == "fail" ]]; then
 fi
 sleep 30
 EOF
-  chmod +x "$fake_bin/docker" "$fake_bin/uv" "$fake_bin/pnpm"
+  cat >"$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+EOF
+  chmod +x "$fake_bin/docker" "$fake_bin/uv" "$fake_bin/pnpm" "$fake_bin/curl"
 }
 
 cleanup_run_dir() {
@@ -176,7 +201,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'cleanup_run_dir "$TMP_DIR/run"; rm -rf "$TMP_DIR"' EXIT
 OUTPUT_FILE="$TMP_DIR/dev-start.out"
 run_dev_start "$TMP_DIR" ":9090" "success" "$OUTPUT_FILE"
-assert_contains "$OUTPUT_FILE" "agent    : http://localhost:9090" \
+assert_contains "$OUTPUT_FILE" "agent api: http://localhost:9090" \
   "dev-start.sh must render :9090 as localhost URL"
 assert_contains "$OUTPUT_FILE" "本地入口已就绪" \
   "dev-start.sh must print a prominent local entry banner"
@@ -225,6 +250,24 @@ assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'backend_http_url "${BFF_HTTP_
   "dev-start.sh must use shared backend URL formatter"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'docker compose up -d --remove-orphans postgres nginx pgweb' \
   "dev-start.sh must start nginx and pgweb with postgres"
+assert_contains "$REPO_ROOT/docker-compose.yml" 'rabbitmq:' \
+  "docker-compose.yml must define rabbitmq"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'worker.main' \
+  "dev-start.sh must start agent worker"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'outbox_publisher' \
+  "dev-start.sh must start outbox publisher"
+assert_file_exists "$REPO_ROOT/agent/worker/__init__.py" \
+  "agent worker package must exist"
+assert_file_exists "$REPO_ROOT/agent/worker/main.py" \
+  "agent worker module must exist"
+assert_file_exists "$REPO_ROOT/agent/worker/outbox_publisher.py" \
+  "outbox publisher module must exist"
+assert_health_failure_exits "postgres"
+assert_health_failure_exits "rabbitmq"
+assert_contains "$REPO_ROOT/scripts/dev-stop.sh" 'investment-rabbitmq' \
+  "dev-stop.sh must stop rabbitmq"
+assert_contains "$REPO_ROOT/.env.example" 'RABBITMQ_URL=' \
+  ".env.example must define RABBITMQ_URL"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'show_startup_animation' \
   "dev-start.sh must include a terminal startup animation"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'nohup env PYTHONPYCACHEPREFIX=../.pycache uv run python main.py >"$AGENT_LOG" 2>&1 &' \
@@ -266,5 +309,9 @@ assert_contains "$REPO_ROOT/Makefile" 'test-dev-config:' \
   "Makefile must expose test-dev-config target"
 assert_contains "$REPO_ROOT/Makefile" 'bash scripts/test-dev-config.sh' \
   "Makefile test-dev-config target must run script test"
+assert_contains "$REPO_ROOT/Makefile" 'postgres + rabbitmq + nginx + agent api + worker + outbox + web' \
+  "Makefile help must describe all dev-start processes"
+assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'tail -f $AGENT_API_LOG $AGENT_WORKER_LOG $OUTBOX_LOG $WEB_LOG' \
+  "dev-start.sh log hint must include api, worker, outbox, and web logs"
 
 echo "PASS: dev config scripts"

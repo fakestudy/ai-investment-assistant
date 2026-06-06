@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# 停止本地开发环境：web (pnpm) + agent (FastAPI) + postgres/nginx/pgweb (docker)
+# 停止本地开发环境：web + agent API/worker/outbox + postgres/rabbitmq/nginx/pgweb
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-RUN_DIR="$REPO_ROOT/.run"
-AGENT_PID_FILE="$RUN_DIR/agent.pid"
+RUN_DIR="${DEV_RUN_DIR:-$REPO_ROOT/.run}"
+AGENT_API_PID_FILE="$RUN_DIR/agent-api.pid"
+AGENT_WORKER_PID_FILE="$RUN_DIR/agent-worker.pid"
+OUTBOX_PID_FILE="$RUN_DIR/outbox-publisher.pid"
+LEGACY_AGENT_PID_FILE="$RUN_DIR/agent.pid"
 LEGACY_BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 WEB_PID_FILE="$RUN_DIR/web.pid"
 
@@ -68,17 +71,22 @@ stop_pid_file() {
 }
 
 stop_pid_file "web" "$WEB_PID_FILE"
-stop_pid_file "agent" "$AGENT_PID_FILE"
+stop_pid_file "outbox publisher" "$OUTBOX_PID_FILE"
+stop_pid_file "agent worker" "$AGENT_WORKER_PID_FILE"
+stop_pid_file "agent api" "$AGENT_API_PID_FILE"
+if [[ -f "$LEGACY_AGENT_PID_FILE" ]]; then
+  stop_pid_file "legacy agent" "$LEGACY_AGENT_PID_FILE"
+fi
 if [[ -f "$LEGACY_BACKEND_PID_FILE" ]]; then
   stop_pid_file "legacy backend" "$LEGACY_BACKEND_PID_FILE"
 fi
 
 # 停止 docker compose 服务
-info "停止 postgres、nginx 与 pgweb 容器..."
-if docker compose stop nginx postgres pgweb >/dev/null 2>&1; then
-  ok "postgres、nginx 与 pgweb 已停止"
+info "停止 postgres、rabbitmq、nginx 与 pgweb 容器 (investment-rabbitmq)..."
+if docker compose stop nginx postgres pgweb rabbitmq >/dev/null 2>&1; then
+  ok "postgres、rabbitmq、nginx 与 pgweb 已停止"
 else
-  warn "docker compose stop nginx postgres pgweb 失败 (可能未在运行)"
+  warn "docker compose stop nginx postgres pgweb rabbitmq 失败 (可能未在运行)"
 fi
 
 ok "开发环境已停止"

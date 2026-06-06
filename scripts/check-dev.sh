@@ -162,6 +162,10 @@ OPTIONAL_VARS=(
   DEEPSEEK_MODEL
   DEEPSEEK_TIMEOUT_SECONDS
   BFF_HTTP_ADDR
+  RABBITMQ_URL
+  AGENT_WORKER_ID
+  AGENT_RUN_LEASE_SECONDS
+  OUTBOX_POLL_INTERVAL_MS
   TAVILY_BASE_URL
   FETCH_ALLOW_PRIVATE
 )
@@ -209,6 +213,8 @@ if [[ -n "$BACKEND_HTTP_PORT" ]]; then
 fi
 check_port 3000 "nginx/reverse proxy" fail
 check_port 5432 "postgres"          warn
+check_port 5672 "rabbitmq/amqp"     warn
+check_port 15672 "rabbitmq/management" warn
 
 # ---------------- 5. 汇总 ----------------
 section "汇总"

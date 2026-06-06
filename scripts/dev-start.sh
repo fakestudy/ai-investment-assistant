@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 启动本地开发环境：postgres/nginx/pgweb (docker) + agent (FastAPI) + web (pnpm)
+# 启动本地开发环境：postgres/rabbitmq/nginx/pgweb (docker) + agent API/worker/outbox + web
 # 不再使用 agent / web 的 Docker 镜像，二者直接以脚本进程方式运行。
 
 set -u
@@ -14,9 +14,14 @@ RUN_DIR="${DEV_RUN_DIR:-$REPO_ROOT/.run}"
 LOG_DIR="${DEV_LOG_DIR:-$RUN_DIR/logs}"
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
-AGENT_PID_FILE="$RUN_DIR/agent.pid"
+AGENT_API_PID_FILE="$RUN_DIR/agent-api.pid"
+AGENT_WORKER_PID_FILE="$RUN_DIR/agent-worker.pid"
+OUTBOX_PID_FILE="$RUN_DIR/outbox-publisher.pid"
 WEB_PID_FILE="$RUN_DIR/web.pid"
-AGENT_LOG="$LOG_DIR/agent.log"
+AGENT_API_LOG="$LOG_DIR/agent-api.log"
+AGENT_WORKER_LOG="$LOG_DIR/agent-worker.log"
+OUTBOX_LOG="$LOG_DIR/outbox-publisher.log"
+AGENT_LOG="$AGENT_API_LOG"
 WEB_LOG="$LOG_DIR/web.log"
 
 # ---- 输出辅助 ----
@@ -52,13 +57,16 @@ print_ready_banner() {
     "本地入口已就绪"
     ""
     "  访问 / 登录  http://localhost:3000"
-    "  Nginx 3000 -> Web 3001 -> Agent 8081"
+    "  Nginx 3000 -> Web 3001 -> Agent API 8081"
     ""
     "服务明细:"
     "  - postgres : docker container investment-postgres (5432)"
+    "  - rabbitmq : http://localhost:15672"
     "  - pgweb    : http://localhost:8082"
     "  - nginx    : http://localhost:3000"
-    "  - agent    : $AGENT_HTTP_URL  (log: $AGENT_LOG)"
+    "  - agent api: $AGENT_HTTP_URL  (log: $AGENT_API_LOG)"
+    "  - worker   : local process  (log: $AGENT_WORKER_LOG)"
+    "  - outbox   : local process  (log: $OUTBOX_LOG)"
     "  - web      : http://localhost:3001  (log: $WEB_LOG)"
   )
   local -a styled_lines=(
@@ -66,13 +74,16 @@ print_ready_banner() {
     "${C_GRN}本地入口已就绪${C_RST}"
     ""
     "  ${C_BLD}访问 / 登录${C_RST}  ${C_GRN}http://localhost:3000${C_RST}"
-    "  ${C_DIM}Nginx 3000 -> Web 3001 -> Agent 8081${C_RST}"
+    "  ${C_DIM}Nginx 3000 -> Web 3001 -> Agent API 8081${C_RST}"
     ""
     "${C_BLD}服务明细:${C_RST}"
     "  - postgres : docker container investment-postgres (5432)"
+    "  - rabbitmq : http://localhost:15672"
     "  - pgweb    : http://localhost:8082"
     "  - nginx    : http://localhost:3000"
-    "  - agent    : $AGENT_HTTP_URL  ${C_DIM}(log: $AGENT_LOG)${C_RST}"
+    "  - agent api: $AGENT_HTTP_URL  ${C_DIM}(log: $AGENT_API_LOG)${C_RST}"
+    "  - worker   : local process  ${C_DIM}(log: $AGENT_WORKER_LOG)${C_RST}"
+    "  - outbox   : local process  ${C_DIM}(log: $OUTBOX_LOG)${C_RST}"
     "  - web      : http://localhost:3001  ${C_DIM}(log: $WEB_LOG)${C_RST}"
   )
   local width=56 line border pad i
@@ -121,13 +132,13 @@ if ! AGENT_HTTP_URL="$(backend_http_url "${BFF_HTTP_ADDR:-}")"; then
 fi
 
 # ---- 2. 启动 docker compose 服务 ----
-info "启动 postgres、nginx 与 pgweb 容器..."
-if ! docker compose up -d --remove-orphans postgres nginx pgweb >/dev/null; then
-  error "docker compose up --remove-orphans postgres nginx pgweb 失败"
+info "启动 postgres、rabbitmq、nginx 与 pgweb 容器..."
+if ! docker compose up -d --remove-orphans postgres nginx pgweb rabbitmq >/dev/null; then
+  error "docker compose up --remove-orphans postgres nginx pgweb rabbitmq 失败"
   exit 1
 fi
 
-# 等待 postgres 健康
+# 等待 postgres/rabbitmq 健康
 info "等待 postgres 就绪..."
 for _ in $(seq 1 30); do
   status="$(docker inspect -f '{{.State.Health.Status}}' investment-postgres 2>/dev/null || echo "")"
@@ -138,31 +149,46 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if [[ "$status" != "healthy" ]]; then
-  warn "postgres 健康检查未通过，继续尝试启动 agent"
+  error "postgres 健康检查未通过，请查看 docker compose logs postgres"
+  exit 1
 fi
 
-# ---- 3. 启动 agent ----
-if is_running "$AGENT_PID_FILE"; then
-  warn "agent 已在运行 (pid=$(cat "$AGENT_PID_FILE"))，跳过"
+info "等待 rabbitmq 就绪..."
+for _ in $(seq 1 30); do
+  rabbitmq_status="$(docker inspect -f '{{.State.Health.Status}}' investment-rabbitmq 2>/dev/null || echo "")"
+  if [[ "$rabbitmq_status" == "healthy" ]]; then
+    ok "rabbitmq 已就绪"
+    break
+  fi
+  sleep 1
+done
+if [[ "$rabbitmq_status" != "healthy" ]]; then
+  error "rabbitmq 健康检查未通过，请查看 docker compose logs rabbitmq"
+  exit 1
+fi
+
+# ---- 3. 启动 agent API / worker / outbox ----
+if is_running "$AGENT_API_PID_FILE"; then
+  warn "agent api 已在运行 (pid=$(cat "$AGENT_API_PID_FILE"))，跳过"
 else
-  info "启动 agent (uv run python main.py)..."
+  info "启动 agent api (uv run python main.py)..."
   (
     cd "$REPO_ROOT/agent"
     nohup env PYTHONPYCACHEPREFIX=../.pycache uv run python main.py >"$AGENT_LOG" 2>&1 &
-    echo $! > "$AGENT_PID_FILE"
+    echo $! > "$AGENT_API_PID_FILE"
   )
   sleep 1
-  if ! is_running "$AGENT_PID_FILE"; then
-    error "agent 启动失败，请查看 $AGENT_LOG"
+  if ! is_running "$AGENT_API_PID_FILE"; then
+    error "agent 启动失败，请查看 $AGENT_API_LOG"
     exit 1
   fi
-  ok "agent 进程已拉起 (pid=$(cat "$AGENT_PID_FILE"))，日志: $AGENT_LOG"
+  ok "agent api 进程已拉起 (pid=$(cat "$AGENT_API_PID_FILE"))，日志: $AGENT_API_LOG"
 
   info "等待 agent HTTP 就绪 ($AGENT_HTTP_URL/api/health)..."
   agent_ready=0
   for _ in $(seq 1 60); do
-    if ! is_running "$AGENT_PID_FILE"; then
-      error "agent 进程已退出，请查看 $AGENT_LOG"
+    if ! is_running "$AGENT_API_PID_FILE"; then
+      error "agent 进程已退出，请查看 $AGENT_API_LOG"
       exit 1
     fi
     if curl -fsS -o /dev/null "$AGENT_HTTP_URL/api/health" 2>/dev/null; then
@@ -174,9 +200,43 @@ else
   if [[ "$agent_ready" == "1" ]]; then
     ok "agent HTTP 已就绪"
   else
-    error "agent HTTP 未在超时时间内就绪，请查看 $AGENT_LOG"
+    error "agent HTTP 未在超时时间内就绪，请查看 $AGENT_API_LOG"
     exit 1
   fi
+fi
+
+if is_running "$AGENT_WORKER_PID_FILE"; then
+  warn "agent worker 已在运行 (pid=$(cat "$AGENT_WORKER_PID_FILE"))，跳过"
+else
+  info "启动 agent worker (uv run python -m worker.main)..."
+  (
+    cd "$REPO_ROOT/agent"
+    nohup env PYTHONPYCACHEPREFIX=../.pycache uv run python -m worker.main >"$AGENT_WORKER_LOG" 2>&1 &
+    echo $! > "$AGENT_WORKER_PID_FILE"
+  )
+  sleep 1
+  if ! is_running "$AGENT_WORKER_PID_FILE"; then
+    error "agent worker 启动失败，请查看 $AGENT_WORKER_LOG"
+    exit 1
+  fi
+  ok "agent worker 进程已拉起 (pid=$(cat "$AGENT_WORKER_PID_FILE"))，日志: $AGENT_WORKER_LOG"
+fi
+
+if is_running "$OUTBOX_PID_FILE"; then
+  warn "outbox publisher 已在运行 (pid=$(cat "$OUTBOX_PID_FILE"))，跳过"
+else
+  info "启动 outbox publisher (uv run python -m worker.outbox_publisher)..."
+  (
+    cd "$REPO_ROOT/agent"
+    nohup env PYTHONPYCACHEPREFIX=../.pycache uv run python -m worker.outbox_publisher >"$OUTBOX_LOG" 2>&1 &
+    echo $! > "$OUTBOX_PID_FILE"
+  )
+  sleep 1
+  if ! is_running "$OUTBOX_PID_FILE"; then
+    error "outbox publisher 启动失败，请查看 $OUTBOX_LOG"
+    exit 1
+  fi
+  ok "outbox publisher 进程已拉起 (pid=$(cat "$OUTBOX_PID_FILE"))，日志: $OUTBOX_LOG"
 fi
 
 # ---- 4. 启动 web ----
@@ -231,5 +291,5 @@ ok "开发环境已启动"
 echo ""
 print_ready_banner
 echo ""
-echo "查看日志: tail -f $AGENT_LOG | tail -f $WEB_LOG"
+echo "查看日志: tail -f $AGENT_API_LOG $AGENT_WORKER_LOG $OUTBOX_LOG $WEB_LOG"
 echo "${C_YLW}${C_BLD}停止环境: make dev-stop${C_RST}"
