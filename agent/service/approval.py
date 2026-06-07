@@ -40,6 +40,16 @@ class ApprovalDecisionResult:
     outbox: OutboxEvent
 
 
+@dataclass(frozen=True)
+class ApprovalTimeoutResult:
+    action: str
+    batch: ApprovalBatch
+    requests: list[ApprovalRequest]
+    run: AgentRun
+    outbox: OutboxEvent
+    event: AgentRunEvent | None = None
+
+
 async def submit_approval_decisions(
     session: AsyncSession,
     batch_id: str,
@@ -117,6 +127,90 @@ async def submit_approval_decisions(
         run=run,
         event=event,
         outbox=outbox,
+    )
+
+
+async def expire_approval_batch(
+    session: AsyncSession,
+    batch_id: str,
+    *,
+    now: datetime | None = None,
+) -> ApprovalTimeoutResult | None:
+    decided_at = now or datetime.now(UTC)
+    batch = await _lock_batch(session, batch_id)
+    if batch is None:
+        return None
+    run = await _lock_run(session, batch.agent_run_id)
+    if run is None:
+        return None
+
+    requests = sorted(batch.requests, key=lambda item: item.order_index)
+    if batch.status != "pending":
+        return None
+    if decided_at < batch.expires_at:
+        outbox = await _create_timeout_schedule_outbox(session, batch, decided_at)
+        await session.flush()
+        return ApprovalTimeoutResult(
+            action="rescheduled",
+            batch=batch,
+            requests=requests,
+            run=run,
+            outbox=outbox,
+        )
+
+    for approval_request in requests:
+        approval_request.decision = "expired"
+        approval_request.decided_at = decided_at
+        tool = await session.get(ToolInvocation, approval_request.tool_invocation_id)
+        if tool is not None:
+            tool.status = "expired"
+
+    batch.status = "expired"
+    batch.resolution_source = "timeout"
+    batch.resolved_at = decided_at
+    run.status = "resume_queued"
+    run.lease_owner = None
+    run.lease_expires_at = None
+    run.updated_at = decided_at
+    run.version += 1
+
+    outbox = await create_outbox_event(
+        session,
+        OutboxEvent(
+            id=_resume_outbox_id(batch.id),
+            event_type="agent.run.resume",
+            aggregate_id=batch.id,
+            payload={
+                "runId": run.id,
+                "batchId": batch.id,
+                "interruptId": batch.interrupt_id,
+                "decisions": _timeout_resume_decisions(requests),
+            },
+            status="pending",
+            attempt_count=0,
+            available_at=decided_at,
+            published_at=None,
+            last_error=None,
+            created_at=decided_at,
+        ),
+    )
+    event = await append_run_event(
+        session,
+        run.id,
+        "approval_resolved",
+        {
+            "type": "approval_resolved",
+            "batch": _approval_batch_payload(batch, requests),
+        },
+    )
+    await session.flush()
+    return ApprovalTimeoutResult(
+        action="expired",
+        batch=batch,
+        requests=requests,
+        run=run,
+        outbox=outbox,
+        event=event,
     )
 
 
@@ -226,6 +320,43 @@ def _ordered_resume_decisions(
         else:
             decisions.append({"type": "reject", "message": "Rejected by user"})
     return decisions
+
+
+def _timeout_resume_decisions(
+    requests: list[ApprovalRequest],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "type": "reject",
+            "message": "Approval timed out after 30 minutes",
+        }
+        for _ in requests
+    ]
+
+
+async def _create_timeout_schedule_outbox(
+    session: AsyncSession,
+    batch: ApprovalBatch,
+    now: datetime,
+) -> OutboxEvent:
+    return await create_outbox_event(
+        session,
+        OutboxEvent(
+            id=f"{batch.id}-timeout-{int(now.timestamp() * 1000)}",
+            event_type="approval.timeout.schedule",
+            aggregate_id=batch.id,
+            payload={
+                "batchId": batch.id,
+                "expiresAt": _format_datetime(batch.expires_at),
+            },
+            status="pending",
+            attempt_count=0,
+            available_at=batch.expires_at,
+            published_at=None,
+            last_error=None,
+            created_at=now,
+        ),
+    )
 
 
 def _approval_batch_payload(

@@ -1,35 +1,20 @@
-"""Minimal agent worker process for local development.
-
-Task 1 wires process topology before command consumption exists. Keeping this
-process alive prevents `dev-start.sh` from advertising a missing module.
-"""
-
 from __future__ import annotations
 
-import signal
-import time
+import asyncio
 
+from worker.command_consumer import run_consumer
 
 def startup_message(label: str) -> str:
-    return f"{label} started; command handling will be implemented in a later task."
+    return f"{label} started; consuming command queues."
 
 
-def run_forever(label: str) -> None:
-    running = True
-
-    def stop(_signum: int, _frame: object) -> None:
-        nonlocal running
-        running = False
-
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGTERM, stop)
+async def run_worker(label: str = "agent worker") -> None:
     print(startup_message(label), flush=True)
-    while running:
-        time.sleep(1)
+    await run_consumer()
 
 
 def main() -> None:
-    run_forever("agent worker")
+    asyncio.run(run_worker())
 
 
 if __name__ == "__main__":
