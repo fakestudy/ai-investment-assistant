@@ -111,3 +111,140 @@ test("listMessages returns backend messages envelope with activeRun", async () =
 	assert.equal(response.messages[0]?.id, "assistant-1");
 	assert.equal(response.activeRun?.runId, "run-1");
 });
+
+test("resumeChatStream uses POST run cursor payload", async () => {
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		return new Response("", {
+			status: 200,
+			headers: { "Content-Type": "text/event-stream" },
+		});
+	};
+	const { resumeChatStream } = await loadApi();
+
+	await resumeChatStream(
+		{ runId: "run-1", afterEventId: 42 },
+		{ signal: new AbortController().signal, onEvent: () => undefined },
+	);
+
+	assert.equal(
+		String(calls[0].input),
+		"http://localhost:3000/api/chat/stream/resume",
+	);
+	assert.equal(calls[0].init?.method, "POST");
+	assert.equal(
+		calls[0].init?.body,
+		JSON.stringify({ runId: "run-1", afterEventId: 42 }),
+	);
+});
+
+test("streamChat uses POST chat payload", async () => {
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		return new Response("", {
+			status: 200,
+			headers: { "Content-Type": "text/event-stream" },
+		});
+	};
+	const { streamChat } = await loadApi();
+
+	await streamChat(
+		{ conversationId: "conversation-1", message: "hello", generateTitle: true },
+		{ signal: new AbortController().signal, onEvent: () => undefined },
+	);
+
+	assert.equal(String(calls[0].input), "http://localhost:3000/api/chat/stream");
+	assert.equal(calls[0].init?.method, "POST");
+	assert.equal(
+		calls[0].init?.body,
+		JSON.stringify({
+			conversationId: "conversation-1",
+			message: "hello",
+			generateTitle: true,
+		}),
+	);
+});
+
+test("submitApprovalDecisions posts decisions before cursor to batch URL", async () => {
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		return new Response("", {
+			status: 200,
+			headers: { "Content-Type": "text/event-stream" },
+		});
+	};
+	const { submitApprovalDecisions } = await loadApi();
+
+	await submitApprovalDecisions(
+		"batch-1",
+		{
+			decisions: [{ approvalRequestId: "request-1", decision: "approve" }],
+			afterEventId: 43,
+		},
+		{ signal: new AbortController().signal, onEvent: () => undefined },
+	);
+
+	assert.equal(
+		String(calls[0].input),
+		"http://localhost:3000/api/chat/approval/decisions/batch-1",
+	);
+	assert.equal(calls[0].init?.method, "POST");
+	assert.equal(
+		calls[0].init?.body,
+		JSON.stringify({
+			decisions: [{ approvalRequestId: "request-1", decision: "approve" }],
+			afterEventId: 43,
+		}),
+	);
+});
+
+test("readSseResponse exposes numeric event id", async () => {
+	globalThis.fetch = async () =>
+		new Response(
+			[
+				"id: 43",
+				'data: {"type":"done","runId":"run-1","messageId":"assistant-1"}',
+				"",
+			].join("\n"),
+			{
+				status: 200,
+				headers: { "Content-Type": "text/event-stream" },
+			},
+		);
+	const received: Array<{
+		eventId?: number;
+		event: { type: string; runId: string; messageId: string };
+	}> = [];
+	const { streamChat } = await loadApi();
+
+	await streamChat(
+		{ conversationId: "conversation-1", message: "hello" },
+		{
+			signal: new AbortController().signal,
+			onEvent: (event) => received.push(event as (typeof received)[number]),
+		},
+	);
+
+	assert.equal(received[0]?.eventId, 43);
+	assert.equal(received[0]?.event.type, "done");
+});
+
+test("stream endpoints throw ChatApiError with status on conflict", async () => {
+	globalThis.fetch = async () => new Response("conflict", { status: 409 });
+	const { ChatApiError, streamChat } = await loadApi();
+
+	await assert.rejects(
+		() =>
+			streamChat(
+				{ conversationId: "conversation-1", message: "hello" },
+				{ signal: new AbortController().signal, onEvent: () => undefined },
+			),
+		(error) => error instanceof ChatApiError && error.status === 409,
+	);
+});

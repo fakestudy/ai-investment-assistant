@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+	ChatApiError,
 	cancelChatStream,
 	createConversation,
 	deleteConversation,
@@ -10,20 +11,15 @@ import {
 	resumeChatStream,
 	streamChat,
 } from "./api";
-import {
-	appendReasoningTimelinePart,
-	resetStreamCreatedMessage,
-	upsertToolTimelinePart,
-} from "./chat-ui-state";
+import { reduceChatStreamEvent } from "./chat-event-reducer";
 import type {
 	ActiveRunSummary,
-	ApprovalBatch,
 	ChatError,
 	ChatMessage,
 	ChatStreamEvent,
-	ChatTimelinePart,
 	Conversation,
-	ToolInvocation,
+	ConversationRunState,
+	ReceivedChatStreamEvent,
 } from "./types";
 
 type LoadConversationsOptions = {
@@ -34,6 +30,7 @@ type ChatState = {
 	conversations: Conversation[];
 	activeConversationId?: string;
 	messagesByConversationId: Record<string, ChatMessage[]>;
+	activeRunsByConversationId: Record<string, ConversationRunState | undefined>;
 	isLoadingConversations: boolean;
 	isLoadingMessages: boolean;
 	isStreaming: boolean;
@@ -74,25 +71,6 @@ const toChatError = (error: unknown, scope: ChatError["scope"]): ChatError => ({
 	scope,
 });
 
-const upsertMessage = (
-	messages: ChatMessage[],
-	nextMessage: ChatMessage,
-): ChatMessage[] => {
-	const messageIndex = messages.findIndex(
-		(message) => message.id === nextMessage.id,
-	);
-
-	if (messageIndex === -1) {
-		return [...messages, nextMessage];
-	}
-
-	return messages.map((message, index) =>
-		index === messageIndex
-			? resetStreamCreatedMessage(message, nextMessage)
-			: message,
-	);
-};
-
 const updateMessage = (
 	messages: ChatMessage[],
 	messageId: string,
@@ -100,52 +78,6 @@ const updateMessage = (
 ): ChatMessage[] =>
 	messages.map((message) =>
 		message.id === messageId ? update(message) : message,
-	);
-
-const upsertToolInvocation = (
-	invocations: ToolInvocation[] | undefined,
-	nextInvocation: ToolInvocation,
-): ToolInvocation[] => {
-	const currentInvocations = invocations ?? [];
-	const invocationIndex = currentInvocations.findIndex(
-		(invocation) => invocation.id === nextInvocation.id,
-	);
-
-	if (invocationIndex === -1) {
-		return [...currentInvocations, nextInvocation];
-	}
-
-	return currentInvocations.map((invocation, index) =>
-		index === invocationIndex
-			? { ...invocation, ...nextInvocation }
-			: invocation,
-	);
-};
-
-const upsertApprovalTimelinePart = (
-	parts: ChatMessage["timelineParts"],
-	nextPart: Extract<ChatTimelinePart, { type: "approval" }>,
-) => {
-	const currentParts = parts ?? [];
-	const partIndex = currentParts.findIndex((part) => part.id === nextPart.id);
-
-	if (partIndex === -1) {
-		return [...currentParts, nextPart];
-	}
-
-	return currentParts.map((part, index) =>
-		index === partIndex ? nextPart : part,
-	);
-};
-
-const updateApprovalTimelineBatch = (
-	parts: ChatMessage["timelineParts"],
-	batch: ApprovalBatch,
-) =>
-	parts?.map((part) =>
-		part.type === "approval" && part.batch.id === batch.id
-			? { ...part, batch }
-			: part,
 	);
 
 const updateConversationTitle = (
@@ -238,10 +170,24 @@ const mergeLoadedConversationMessagesById = ({
 	];
 };
 
-const reduceStreamEvent = (
+const toConversationRunState = (
+	activeRun: ActiveRunSummary,
+): ConversationRunState => ({
+	runId: activeRun.runId,
+	assistantMessageId: activeRun.assistantMessageId,
+	status:
+		activeRun.status === "awaiting_approval"
+			? "awaiting_approval"
+			: activeRun.status === "resuming" || activeRun.status === "resume_queued"
+				? "resuming"
+				: "streaming",
+	lastEventId: activeRun.lastEventId ?? undefined,
+	approvalBatch: activeRun.approvalBatch ?? undefined,
+});
+
+const reduceStreamUiSideEffects = (
 	state: ChatState,
 	event: ChatStreamEvent,
-	streamConversationId: string,
 ): Partial<ChatState> => {
 	if (event.type === "title") {
 		return {
@@ -260,153 +206,18 @@ const reduceStreamEvent = (
 	}
 
 	if (event.type === "error") {
-		const nextState: Partial<ChatState> = {
+		return {
 			isStreaming: false,
 			streamingConversationId: undefined,
 			streamingMessageId: undefined,
 			abortController: undefined,
 			error: { message: event.message, scope: "stream" },
 		};
-
-		if (event.messageId) {
-			nextState.messagesByConversationId = {
-				...state.messagesByConversationId,
-				[streamConversationId]: updateMessage(
-					state.messagesByConversationId[streamConversationId] ?? [],
-					event.messageId,
-					(message) => ({ ...message, status: "error" }),
-				),
-			};
-		}
-
-		return nextState;
-	}
-
-	const conversationId =
-		event.type === "message_created"
-			? event.message.conversationId
-			: streamConversationId;
-
-	const messages = state.messagesByConversationId[conversationId] ?? [];
-
-	if (
-		event.type !== "message_created" &&
-		!(conversationId in state.messagesByConversationId)
-	) {
-		return {};
 	}
 
 	if (event.type === "message_created") {
 		return {
 			streamingMessageId: event.message.id,
-			messagesByConversationId: {
-				...state.messagesByConversationId,
-				[conversationId]: upsertMessage(messages, event.message),
-			},
-		};
-	}
-
-	if (event.type === "delta") {
-		return {
-			messagesByConversationId: {
-				...state.messagesByConversationId,
-				[conversationId]: updateMessage(
-					messages,
-					event.messageId,
-					(message) => ({
-						...message,
-						content: `${message.content}${event.text}`,
-						status: "streaming",
-					}),
-				),
-			},
-		};
-	}
-
-	if (event.type === "reasoning") {
-		return {
-			messagesByConversationId: {
-				...state.messagesByConversationId,
-				[conversationId]: updateMessage(
-					messages,
-					event.messageId,
-					(message) => ({
-						...message,
-						reasoning: `${message.reasoning ?? ""}${event.text}`,
-						timelineParts: appendReasoningTimelinePart(message.timelineParts, {
-							id: createLocalId(),
-							text: event.text,
-						}),
-						status: "streaming",
-					}),
-				),
-			},
-		};
-	}
-
-	if (event.type === "tool_call" || event.type === "tool_result") {
-		return {
-			messagesByConversationId: {
-				...state.messagesByConversationId,
-				[conversationId]: updateMessage(
-					messages,
-					event.messageId,
-					(message) => ({
-						...message,
-						toolInvocations: upsertToolInvocation(
-							message.toolInvocations,
-							event.invocation,
-						),
-						timelineParts: upsertToolTimelinePart(
-							message.timelineParts,
-							event.invocation,
-						),
-						status: "streaming",
-					}),
-				),
-			},
-		};
-	}
-
-	if (event.type === "approval_required") {
-		return {
-			messagesByConversationId: {
-				...state.messagesByConversationId,
-				[conversationId]: updateMessage(
-					messages,
-					event.messageId,
-					(message) => ({
-						...message,
-						timelineParts: upsertApprovalTimelinePart(
-							message.timelineParts,
-							event.part,
-						),
-						status: "streaming",
-					}),
-				),
-			},
-		};
-	}
-
-	if (event.type === "approval_resolved") {
-		return {
-			messagesByConversationId: {
-				...state.messagesByConversationId,
-				[conversationId]: messages.map((message) => ({
-					...message,
-					timelineParts: updateApprovalTimelineBatch(
-						message.timelineParts,
-						event.batch,
-					),
-					status:
-						message.timelineParts?.some(
-							(part) =>
-								part.type === "approval" && part.batch.id === event.batch.id,
-						) && message.status !== "done"
-							? "streaming"
-							: message.status,
-				})),
-			},
 		};
 	}
 
@@ -416,17 +227,6 @@ const reduceStreamEvent = (
 			streamingConversationId: undefined,
 			streamingMessageId: undefined,
 			abortController: undefined,
-			messagesByConversationId: {
-				...state.messagesByConversationId,
-				[conversationId]: updateMessage(
-					messages,
-					event.messageId,
-					(message) => ({
-						...message,
-						status: "done",
-					}),
-				),
-			},
 		};
 	}
 
@@ -438,7 +238,7 @@ type StartStreamInput = {
 	initialMessageId?: string;
 	connect: (
 		signal: AbortSignal,
-		onEvent: (event: ChatStreamEvent) => void,
+		onEvent: (event: ReceivedChatStreamEvent) => void,
 	) => Promise<void>;
 };
 
@@ -471,12 +271,43 @@ const startStream = async (
 	});
 
 	try {
-		await input.connect(abortController.signal, (event) => {
-			set((state) => reduceStreamEvent(state, event, input.conversationId));
+		await input.connect(abortController.signal, (received) => {
+			set((state) => {
+				const eventConversationId =
+					received.event.type === "message_created"
+						? received.event.message.conversationId
+						: input.conversationId;
+				const activeRun = state.activeRunsByConversationId[eventConversationId];
+
+				const projected = reduceChatStreamEvent(
+					{
+						messages: state.messagesByConversationId[eventConversationId] ?? [],
+						activeRun,
+					},
+					received,
+				);
+
+				return {
+					...reduceStreamUiSideEffects(state, received.event),
+					messagesByConversationId: {
+						...state.messagesByConversationId,
+						[eventConversationId]: projected.messages,
+					},
+					activeRunsByConversationId: {
+						...state.activeRunsByConversationId,
+						[eventConversationId]: projected.activeRun,
+					},
+				};
+			});
 		});
 		await get().loadConversations({ force: true });
 	} catch (error) {
 		if (!abortController.signal.aborted) {
+			if (error instanceof ChatApiError && error.status === 409) {
+				await get().selectConversation(input.conversationId);
+				return;
+			}
+
 			const failedMessageId =
 				get().streamingMessageId ?? input.initialMessageId;
 			set((state) => ({
@@ -544,6 +375,7 @@ const resumeActiveRun = (
 export const useChatStore = create<ChatState>((set, get) => ({
 	conversations: [],
 	messagesByConversationId: {},
+	activeRunsByConversationId: {},
 	isLoadingConversations: false,
 	isLoadingMessages: false,
 	isStreaming: false,
@@ -623,6 +455,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 								loadedMessages: messages,
 							})
 						: messages,
+				},
+				activeRunsByConversationId: {
+					...state.activeRunsByConversationId,
+					[conversationId]: activeRun
+						? toConversationRunState(activeRun)
+						: undefined,
 				},
 				isLoadingMessages: false,
 			}));

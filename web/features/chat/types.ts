@@ -116,6 +116,24 @@ export type ChatStreamResumeRequest = {
 	afterEventId: number;
 };
 
+export type ConversationRunState = {
+	runId: string;
+	assistantMessageId: string;
+	status: "streaming" | "awaiting_approval" | "resuming";
+	lastEventId?: number;
+	approvalBatch?: ApprovalBatch;
+};
+
+export type ApprovalDecisionRequest = {
+	approvalRequestId: string;
+	decision: "approve" | "reject";
+};
+
+export type SubmitApprovalDecisionsRequest = {
+	decisions: ApprovalDecisionRequest[];
+	afterEventId: number;
+};
+
 export type ChatStreamEvent =
 	| {
 			type: "run_created";
@@ -123,14 +141,24 @@ export type ChatStreamEvent =
 			status: RunStatus;
 			assistantMessageId: string;
 	  }
-	| { type: "message_created"; message: ChatMessage }
-	| { type: "delta"; messageId: string; text: string }
-	| { type: "reasoning"; messageId: string; text: string }
-	| { type: "tool_call"; messageId: string; invocation: ToolInvocation }
-	| { type: "tool_result"; messageId: string; invocation: ToolInvocation }
-	| { type: "title"; conversationId: string; title: string }
-	| { type: "done"; messageId: string }
-	| { type: "error"; messageId?: string; message: string }
+	| { type: "message_created"; runId: string; message: ChatMessage }
+	| { type: "delta"; runId: string; messageId: string; text: string }
+	| { type: "reasoning"; runId: string; messageId: string; text: string }
+	| {
+			type: "tool_call";
+			runId: string;
+			messageId: string;
+			invocation: ToolInvocation;
+	  }
+	| {
+			type: "tool_result";
+			runId: string;
+			messageId: string;
+			invocation: ToolInvocation;
+	  }
+	| { type: "title"; runId: string; conversationId: string; title: string }
+	| { type: "done"; runId: string; messageId: string }
+	| { type: "error"; runId: string; messageId?: string; message: string }
 	| {
 			type: "approval_required";
 			runId: string;
@@ -142,6 +170,11 @@ export type ChatStreamEvent =
 			runId: string;
 			batch: ApprovalBatch;
 	  };
+
+export type ReceivedChatStreamEvent = {
+	eventId?: number;
+	event: ChatStreamEvent;
+};
 
 export type ChatError = {
 	message: string;

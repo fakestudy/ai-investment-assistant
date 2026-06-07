@@ -567,3 +567,128 @@ test("stream reducer handles run and approval lifecycle events", async () => {
 		);
 	}
 });
+
+test("sendMessage refreshes conversation messages when stream returns 409 conflict", async () => {
+	const { useChatStore } = await loadStore();
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		const url = String(input);
+
+		if (url.endsWith("/api/chat/stream")) {
+			return new Response("conflict", { status: 409 });
+		}
+
+		if (url.endsWith("/api/conversation/messages/conversation-1")) {
+			return new Response(
+				JSON.stringify({
+					messages: [
+						{
+							id: "assistant-fresh",
+							conversationId: "conversation-1",
+							role: "assistant",
+							content: "fresh after conflict",
+							status: "done",
+							createdAt: "2026-01-01T00:01:00.000Z",
+						},
+					],
+					activeRun: null,
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+
+		return new Response(
+			JSON.stringify([conversation("conversation-1", "Synced")]),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	useChatStore.setState({
+		activeConversationId: "conversation-1",
+		conversations: [conversation("conversation-1", "Local")],
+		messagesByConversationId: { "conversation-1": [] },
+		isStreaming: false,
+		streamingConversationId: undefined,
+		streamingMessageId: undefined,
+		abortController: undefined,
+	});
+
+	await useChatStore.getState().sendMessage("hello");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	assert.ok(
+		calls.some((call) =>
+			String(call.input).endsWith("/api/conversation/messages/conversation-1"),
+		),
+	);
+	assert.deepEqual(useChatStore.getState().messagesByConversationId, {
+		"conversation-1": [
+			{
+				id: "assistant-fresh",
+				conversationId: "conversation-1",
+				role: "assistant",
+				content: "fresh after conflict",
+				status: "done",
+				createdAt: "2026-01-01T00:01:00.000Z",
+			},
+		],
+	});
+});
+
+test("stream reducer ignores duplicate SSE event ids in store", async () => {
+	const { useChatStore } = await loadStore();
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+
+		if (url.endsWith("/api/chat/stream")) {
+			return new Response(
+				[
+					'id: 40\ndata: {"type":"run_created","runId":"run-1","status":"running","assistantMessageId":"assistant-1"}',
+					'id: 41\ndata: {"type":"message_created","runId":"run-1","message":{"id":"assistant-1","conversationId":"conversation-1","role":"assistant","content":"","status":"streaming","createdAt":"2026-01-01T00:00:00.000Z"}}',
+					'id: 42\ndata: {"type":"delta","runId":"run-1","messageId":"assistant-1","text":"hello"}',
+					'id: 42\ndata: {"type":"delta","runId":"run-1","messageId":"assistant-1","text":"hello"}',
+					'id: 43\ndata: {"type":"done","runId":"run-1","messageId":"assistant-1"}',
+					"",
+				].join("\n\n"),
+				{
+					status: 200,
+					headers: { "Content-Type": "text/event-stream" },
+				},
+			);
+		}
+
+		return new Response(
+			JSON.stringify([conversation("conversation-1", "Synced")]),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	useChatStore.setState({
+		activeConversationId: "conversation-1",
+		conversations: [conversation("conversation-1", "Local")],
+		messagesByConversationId: { "conversation-1": [] },
+		isStreaming: false,
+		streamingConversationId: undefined,
+		streamingMessageId: undefined,
+		abortController: undefined,
+	});
+
+	await useChatStore.getState().sendMessage("hello");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	const assistant =
+		useChatStore.getState().messagesByConversationId["conversation-1"]?.[1];
+	assert.equal(assistant?.content, "hello");
+});

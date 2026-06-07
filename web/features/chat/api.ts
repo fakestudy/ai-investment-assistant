@@ -4,7 +4,9 @@ import type {
 	ChatStreamResumeRequest,
 	Conversation,
 	ConversationMessagesResponse,
+	ReceivedChatStreamEvent,
 	StreamChatRequest,
+	SubmitApprovalDecisionsRequest,
 } from "./types";
 
 export const CHAT_API_BASE =
@@ -25,6 +27,16 @@ function jsonHeaders(headers?: HeadersInit) {
 	};
 }
 
+export class ChatApiError extends Error {
+	status: number;
+
+	constructor(status: number) {
+		super(`Request failed with status ${status}`);
+		this.name = "ChatApiError";
+		this.status = status;
+	}
+}
+
 async function requestJson<T>(
 	path: string,
 	init?: JsonRequestInit,
@@ -36,7 +48,7 @@ async function requestJson<T>(
 	});
 
 	if (!response.ok) {
-		throw new Error(`Request failed with status ${response.status}`);
+		throw new ChatApiError(response.status);
 	}
 
 	return response.json() as Promise<T>;
@@ -53,7 +65,7 @@ async function requestVoid(
 	});
 
 	if (!response.ok) {
-		throw new Error(`Request failed with status ${response.status}`);
+		throw new ChatApiError(response.status);
 	}
 }
 
@@ -122,9 +134,13 @@ export async function cancelChatStream(messageId: string): Promise<void> {
 	);
 }
 
-function parseSseEvent(rawEvent: string): ChatStreamEvent | undefined {
-	const data = rawEvent
-		.split(/\r?\n/)
+function parseSseEvent(rawEvent: string): ReceivedChatStreamEvent | undefined {
+	const lines = rawEvent.split(/\r?\n/);
+	const idLine = lines.find((line) => line.startsWith("id:"));
+	const parsedEventId = idLine
+		? Number.parseInt(idLine.slice("id:".length).trim(), 10)
+		: Number.NaN;
+	const data = lines
 		.filter((line) => line.startsWith("data:"))
 		.map((line) => line.slice("data:".length).trimStart())
 		.join("\n")
@@ -134,13 +150,16 @@ function parseSseEvent(rawEvent: string): ChatStreamEvent | undefined {
 		return undefined;
 	}
 
-	return JSON.parse(data) as ChatStreamEvent;
+	return {
+		eventId: Number.isNaN(parsedEventId) ? undefined : parsedEventId,
+		event: JSON.parse(data) as ChatStreamEvent,
+	};
 }
 
 async function readSseResponse(
 	response: Response,
 	options: {
-		onEvent: (event: ChatStreamEvent) => void;
+		onEvent: (event: ReceivedChatStreamEvent) => void;
 	},
 ): Promise<void> {
 	if (!response.body) {
@@ -180,7 +199,7 @@ export async function streamChat(
 	request: StreamChatRequest,
 	options: {
 		signal: AbortSignal;
-		onEvent: (event: ChatStreamEvent) => void;
+		onEvent: (event: ReceivedChatStreamEvent) => void;
 	},
 ): Promise<void> {
 	const response = await fetch(buildApiUrl("/api/chat/stream"), {
@@ -191,7 +210,7 @@ export async function streamChat(
 	});
 
 	if (!response.ok) {
-		throw new Error(`Request failed with status ${response.status}`);
+		throw new ChatApiError(response.status);
 	}
 
 	await readSseResponse(response, options);
@@ -201,7 +220,7 @@ export async function resumeChatStream(
 	request: ChatStreamResumeRequest,
 	options: {
 		signal: AbortSignal;
-		onEvent: (event: ChatStreamEvent) => void;
+		onEvent: (event: ReceivedChatStreamEvent) => void;
 	},
 ): Promise<void> {
 	const response = await fetch(buildApiUrl("/api/chat/stream/resume"), {
@@ -212,7 +231,35 @@ export async function resumeChatStream(
 	});
 
 	if (!response.ok) {
-		throw new Error(`Request failed with status ${response.status}`);
+		throw new ChatApiError(response.status);
+	}
+
+	await readSseResponse(response, options);
+}
+
+export async function submitApprovalDecisions(
+	batchId: string,
+	request: SubmitApprovalDecisionsRequest,
+	options: {
+		signal: AbortSignal;
+		onEvent: (event: ReceivedChatStreamEvent) => void;
+	},
+): Promise<void> {
+	const response = await fetch(
+		buildApiUrl(`/api/chat/approval/decisions/${encodeURIComponent(batchId)}`),
+		{
+			method: "POST",
+			headers: jsonHeaders(),
+			body: JSON.stringify({
+				decisions: request.decisions,
+				afterEventId: request.afterEventId,
+			}),
+			signal: options.signal,
+		},
+	);
+
+	if (!response.ok) {
+		throw new ChatApiError(response.status);
 	}
 
 	await readSseResponse(response, options);
