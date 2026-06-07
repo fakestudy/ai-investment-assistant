@@ -1,0 +1,4357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDD 公司研究跟踪工作台 - 交互原型</title>
+  <meta name="description" content="基于官方财报和公司信息的公司研究跟踪工作台高保真交互原型">
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      --paper: #f2eee4;
+      --paper-deep: #e9e3d6;
+      --surface: #faf8f2;
+      --surface-raised: #fffdf7;
+      --ink: #17201e;
+      --ink-soft: #46504d;
+      --ink-faint: #7b827d;
+      --line: #cbc4b6;
+      --line-strong: #938b7d;
+      --signal: #d74d2f;
+      --signal-soft: #f4ddd5;
+      --positive: #1f6a56;
+      --positive-soft: #dcece6;
+      --warning: #9c6417;
+      --warning-soft: #f2e5ca;
+      --neutral: #5d6671;
+      --neutral-soft: #e4e7e9;
+      --focus: #2259a8;
+      --font-display: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
+      --font-body: "Avenir Next", "PingFang SC", "Hiragino Sans GB", sans-serif;
+      --font-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+      --header-h: 72px;
+      --rail-w: 286px;
+      --drawer-w: 430px;
+      --radius: 3px;
+      --shadow: 0 18px 45px rgba(37, 31, 20, .12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--paper);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: var(--font-body);
+      font-size: 14px;
+      line-height: 1.55;
+      letter-spacing: .005em;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    select:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .icon {
+      width: 16px;
+      height: 16px;
+      stroke-width: 1.8;
+      flex: 0 0 auto;
+    }
+
+    .icon-sm {
+      width: 14px;
+      height: 14px;
+    }
+
+    .icon-lg {
+      width: 19px;
+      height: 19px;
+    }
+
+    .masthead {
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 40;
+      height: var(--header-h);
+      display: grid;
+      grid-template-columns: var(--rail-w) minmax(0, 1fr) auto;
+      align-items: stretch;
+      background: var(--ink);
+      color: #f7f3e9;
+      border-bottom: 1px solid #090d0c;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 22px;
+      border-right: 1px solid rgba(255, 255, 255, .15);
+    }
+
+    .brand-mark {
+      width: 29px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: var(--signal);
+      border: 1px solid rgba(255, 255, 255, .35);
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .brand-name {
+      font-family: var(--font-display);
+      font-size: 17px;
+      letter-spacing: .04em;
+    }
+
+    .brand-subtitle {
+      margin-top: 1px;
+      color: #aeb7b2;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .company-switcher {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      padding: 0 24px;
+    }
+
+    .company-button {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 10px;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .ticker-block {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--signal);
+      border-radius: 50%;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: -.04em;
+    }
+
+    .company-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .company-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #aeb7b2;
+      font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    .demo-flag {
+      padding: 2px 6px;
+      color: #ffd8cf;
+      border: 1px solid rgba(215, 77, 47, .65);
+      font-family: var(--font-body);
+      font-size: 9px;
+      letter-spacing: .08em;
+    }
+
+    .masthead-actions {
+      display: flex;
+      align-items: stretch;
+    }
+
+    .header-action,
+    .search-trigger {
+      position: relative;
+      min-width: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 17px;
+      color: #e7e9e5;
+      background: transparent;
+      border: 0;
+      border-left: 1px solid rgba(255, 255, 255, .15);
+      cursor: pointer;
+    }
+
+    .header-action:hover,
+    .search-trigger:hover {
+      background: rgba(255, 255, 255, .06);
+    }
+
+    .search-trigger {
+      min-width: 190px;
+      justify-content: flex-start;
+      color: #b9c0bc;
+      font-size: 12px;
+    }
+
+    .search-trigger kbd {
+      margin-left: auto;
+      padding: 2px 5px;
+      color: #8f9994;
+      background: rgba(255, 255, 255, .08);
+      border: 1px solid rgba(255, 255, 255, .14);
+      font-family: var(--font-mono);
+      font-size: 9px;
+    }
+
+    .header-action.has-dot::after {
+      content: "";
+      position: absolute;
+      top: 23px;
+      right: 20px;
+      width: 6px;
+      height: 6px;
+      background: var(--signal);
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+    }
+
+    .research-rail {
+      position: fixed;
+      z-index: 30;
+      top: var(--header-h);
+      bottom: 0;
+      left: 0;
+      width: var(--rail-w);
+      display: flex;
+      flex-direction: column;
+      background: var(--paper-deep);
+      border-right: 1px solid var(--line);
+    }
+
+    .rail-head {
+      padding: 21px 20px 15px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .rail-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 6px;
+    }
+
+    .rail-title {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .icon-button {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .icon-button:hover {
+      color: var(--ink);
+      background: var(--surface);
+    }
+
+    [data-tooltip]::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      z-index: 90;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      width: max-content;
+      max-width: 220px;
+      padding: 5px 8px;
+      color: #fff;
+      background: var(--ink);
+      border: 1px solid rgba(255, 255, 255, .15);
+      border-radius: 2px;
+      font-size: 10px;
+      line-height: 1.35;
+      transform: translateX(-50%) translateY(3px);
+      opacity: 0;
+      pointer-events: none;
+      transition: .16s ease;
+    }
+
+    [data-tooltip]:hover::after {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    .rail-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 16px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+
+    .rail-stat {
+      padding: 9px 5px;
+      background: rgba(255, 253, 247, .4);
+      text-align: center;
+    }
+
+    .rail-stat strong {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 19px;
+      line-height: 1.1;
+    }
+
+    .rail-stat span {
+      color: var(--ink-faint);
+      font-size: 9px;
+    }
+
+    .question-nav {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 10px 20px;
+    }
+
+    .nav-group-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 9px 6px;
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .research-nav-item {
+      position: relative;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 9px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: start;
+      padding: 12px 9px;
+      background: transparent;
+      border: 0;
+      border-top: 1px solid transparent;
+      border-bottom: 1px solid transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .research-nav-item:hover {
+      background: rgba(255, 253, 247, .55);
+    }
+
+    .research-nav-item.active {
+      background: var(--surface);
+      border-color: var(--line);
+    }
+
+    .research-nav-item.active::before {
+      content: "";
+      position: absolute;
+      inset: -1px auto -1px -10px;
+      width: 3px;
+      background: var(--signal);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      margin-top: 6px;
+      border-radius: 50%;
+      background: var(--neutral);
+    }
+
+    .status-dot.improving {
+      background: var(--positive);
+    }
+
+    .status-dot.deteriorating {
+      background: var(--signal);
+    }
+
+    .status-dot.unchanged {
+      background: var(--neutral);
+    }
+
+    .status-dot.insufficient {
+      background: var(--warning);
+    }
+
+    .nav-question-title {
+      display: -webkit-box;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.45;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .nav-question-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 5px;
+      color: var(--ink-faint);
+      font-size: 9px;
+    }
+
+    .unread-dot {
+      width: 5px;
+      height: 5px;
+      background: var(--signal);
+      border-radius: 50%;
+    }
+
+    .nav-pin {
+      margin-top: 3px;
+      color: var(--warning);
+    }
+
+    .rail-foot {
+      padding: 14px 15px 17px;
+      background: rgba(255, 253, 247, .42);
+      border-top: 1px solid var(--line);
+    }
+
+    .coverage-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 9px;
+      font-size: 11px;
+    }
+
+    .coverage-score {
+      font-family: var(--font-mono);
+      font-weight: 700;
+    }
+
+    .coverage-bar {
+      height: 5px;
+      overflow: hidden;
+      background: #d6cfc1;
+    }
+
+    .coverage-bar span {
+      display: block;
+      width: 92%;
+      height: 100%;
+      background: var(--positive);
+    }
+
+    .coverage-link {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 0;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      font-size: 10px;
+      text-align: left;
+    }
+
+    .app-main {
+      min-height: 100vh;
+      margin-left: var(--rail-w);
+      padding-top: var(--header-h);
+      transition: margin-right .25s ease;
+    }
+
+    body.drawer-open .app-main {
+      margin-right: var(--drawer-w);
+    }
+
+    .workspace {
+      width: min(1120px, calc(100vw - var(--rail-w) - 64px));
+      margin: 0 auto;
+      padding: 34px 0 90px;
+    }
+
+    .workspace-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: end;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .workspace-kicker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink-faint);
+      font-size: 11px;
+    }
+
+    .live-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--positive);
+      font-weight: 600;
+    }
+
+    .live-status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      background: var(--positive);
+      border-radius: 50%;
+      box-shadow: 0 0 0 4px rgba(31, 106, 86, .11);
+    }
+
+    .workspace-title {
+      max-width: 760px;
+      margin: 9px 0 8px;
+      font-family: var(--font-display);
+      font-size: clamp(36px, 4vw, 57px);
+      font-weight: 500;
+      line-height: 1.04;
+      letter-spacing: -.035em;
+    }
+
+    .workspace-subtitle {
+      max-width: 710px;
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 14px;
+    }
+
+    .header-controls {
+      display: grid;
+      gap: 9px;
+      min-width: 245px;
+    }
+
+    .control-label {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .select-shell {
+      position: relative;
+    }
+
+    .select-shell select {
+      width: 100%;
+      height: 42px;
+      appearance: none;
+      padding: 0 42px 0 13px;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .select-shell .icon {
+      position: absolute;
+      top: 13px;
+      right: 13px;
+      pointer-events: none;
+    }
+
+    .control-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .text-button,
+    .primary-button,
+    .secondary-button,
+    .danger-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 38px;
+      padding: 8px 13px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+      transition: .15s ease;
+    }
+
+    .primary-button {
+      color: #fff;
+      background: var(--ink);
+      border: 1px solid var(--ink);
+    }
+
+    .primary-button:hover {
+      background: #2b3633;
+      transform: translateY(-1px);
+    }
+
+    .secondary-button,
+    .text-button {
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+    }
+
+    .secondary-button:hover,
+    .text-button:hover {
+      background: var(--surface-raised);
+      border-color: var(--ink-soft);
+    }
+
+    .danger-button {
+      color: var(--signal);
+      background: transparent;
+      border: 1px solid var(--signal);
+    }
+
+    .compact-button {
+      min-height: 30px;
+      padding: 5px 9px;
+      font-size: 10px;
+    }
+
+    .switch-button {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .switch-track {
+      position: relative;
+      width: 31px;
+      height: 17px;
+      background: #b8b1a4;
+      border-radius: 20px;
+      transition: .18s ease;
+    }
+
+    .switch-track::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 11px;
+      height: 11px;
+      background: #fff;
+      border-radius: 50%;
+      transition: .18s ease;
+    }
+
+    .switch-button[aria-pressed="true"] .switch-track {
+      background: var(--signal);
+    }
+
+    .switch-button[aria-pressed="true"] .switch-track::after {
+      left: 17px;
+    }
+
+    .snapshot-ribbon {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      margin-top: 22px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+
+    .ribbon-cell {
+      min-width: 0;
+      padding: 13px 15px;
+      background: rgba(255, 253, 247, .55);
+    }
+
+    .ribbon-cell + .ribbon-cell {
+      border-left: 1px solid var(--line);
+    }
+
+    .ribbon-label {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .ribbon-value {
+      overflow: hidden;
+      margin-top: 4px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .ribbon-value .subtle {
+      color: var(--ink-faint);
+      font-weight: 500;
+    }
+
+    .section {
+      padding: 44px 0 0;
+      scroll-margin-top: calc(var(--header-h) + 22px);
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 17px;
+      padding-bottom: 11px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .section-index {
+      color: var(--signal);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .06em;
+    }
+
+    .section-title {
+      margin: 2px 0 0;
+      font-family: var(--font-display);
+      font-size: 27px;
+      font-weight: 600;
+      line-height: 1.1;
+    }
+
+    .section-description {
+      max-width: 480px;
+      margin: 5px 0 0;
+      color: var(--ink-faint);
+      font-size: 11px;
+    }
+
+    .section-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .change-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 12px;
+    }
+
+    .change-card {
+      position: relative;
+      grid-column: span 4;
+      min-height: 250px;
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--ink);
+      border-radius: var(--radius);
+      transition: .18s ease;
+    }
+
+    .change-card.primary-change {
+      grid-column: span 8;
+      border-top-color: var(--signal);
+    }
+
+    .change-card:hover {
+      background: var(--surface-raised);
+      border-color: var(--line-strong);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(45, 38, 25, .08);
+    }
+
+    .change-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 0;
+    }
+
+    .change-rank {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    .evidence-tag,
+    .status-tag,
+    .diff-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      width: fit-content;
+      padding: 3px 7px;
+      border: 1px solid currentColor;
+      border-radius: 99px;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .evidence-tag.official {
+      color: var(--positive);
+    }
+
+    .evidence-tag.calculated {
+      color: var(--focus);
+    }
+
+    .evidence-tag.analysis {
+      color: var(--warning);
+    }
+
+    .status-tag.improving {
+      color: var(--positive);
+      background: var(--positive-soft);
+    }
+
+    .status-tag.deteriorating {
+      color: var(--signal);
+      background: var(--signal-soft);
+    }
+
+    .status-tag.unchanged {
+      color: var(--neutral);
+      background: var(--neutral-soft);
+    }
+
+    .status-tag.insufficient {
+      color: var(--warning);
+      background: var(--warning-soft);
+    }
+
+    .change-body {
+      flex: 1;
+      padding: 13px 16px 16px;
+    }
+
+    .change-title {
+      max-width: 760px;
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 23px;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+
+    .primary-change .change-title {
+      font-size: 30px;
+    }
+
+    .change-summary {
+      max-width: 680px;
+      margin: 9px 0 0;
+      color: var(--ink-soft);
+      font-size: 12px;
+    }
+
+    .number-comparison {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .number-current {
+      font-family: var(--font-display);
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .number-previous {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      text-decoration: line-through;
+    }
+
+    .number-delta {
+      color: var(--signal);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .mini-chart {
+      width: 100%;
+      height: 58px;
+      margin-top: 12px;
+      overflow: visible;
+    }
+
+    .mini-chart .gridline {
+      stroke: #ddd6c8;
+      stroke-width: 1;
+    }
+
+    .mini-chart .trend {
+      fill: none;
+      stroke: var(--signal);
+      stroke-width: 2.5;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .mini-chart .trend-positive {
+      stroke: var(--positive);
+    }
+
+    .change-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 11px 15px;
+      border-top: 1px solid var(--line);
+      font-size: 10px;
+    }
+
+    .change-question-link {
+      overflow: hidden;
+      color: var(--ink-faint);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .inline-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0;
+      color: var(--ink);
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--ink);
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .inline-link:hover {
+      color: var(--signal);
+      border-color: var(--signal);
+    }
+
+    .change-detail {
+      display: none;
+      padding: 15px 16px 18px;
+      background: #f4f0e6;
+      border-top: 1px solid var(--line);
+    }
+
+    .change-card.expanded .change-detail {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .change-card.expanded {
+      grid-column: 1 / -1;
+    }
+
+    .detail-column {
+      padding: 12px;
+      background: var(--surface);
+      border-left: 2px solid var(--line-strong);
+    }
+
+    .detail-column.management {
+      border-left-color: var(--warning);
+    }
+
+    .detail-column.ai {
+      border-left-color: var(--focus);
+    }
+
+    .detail-column h4 {
+      margin: 0 0 7px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .detail-column p {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 11px;
+    }
+
+    .judgment-ledger {
+      background: var(--ink);
+      color: #f6f2e8;
+      border: 1px solid #0b0f0e;
+    }
+
+    .ledger-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, .18);
+    }
+
+    .ledger-title {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 500;
+    }
+
+    .ledger-count {
+      color: #bcc4c0;
+      font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    .ledger-row {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr) 28px minmax(0, 1fr) 125px;
+      gap: 13px;
+      align-items: center;
+      padding: 15px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, .12);
+    }
+
+    .ledger-row:last-child {
+      border-bottom: 0;
+    }
+
+    .ledger-question {
+      color: #c7cfca;
+      font-size: 11px;
+    }
+
+    .ledger-old {
+      color: #929c97;
+      font-size: 11px;
+      text-decoration: line-through;
+    }
+
+    .ledger-new {
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .ledger-arrow {
+      color: var(--signal);
+    }
+
+    .question-stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .research-question-card {
+      scroll-margin-top: calc(var(--header-h) + 18px);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      transition: .2s ease;
+    }
+
+    .research-question-card.focused {
+      border-color: var(--signal);
+      box-shadow: 0 0 0 3px rgba(215, 77, 47, .1);
+    }
+
+    .question-card-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      padding: 19px 20px 17px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .question-number {
+      color: var(--signal);
+      font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    .question-title {
+      max-width: 760px;
+      margin: 5px 0 0;
+      font-family: var(--font-display);
+      font-size: 25px;
+      line-height: 1.22;
+    }
+
+    .question-head-actions {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+    }
+
+    .question-core {
+      display: grid;
+      grid-template-columns: 1.3fr .7fr;
+      gap: 0;
+    }
+
+    .ai-judgment {
+      padding: 19px 20px;
+      border-right: 1px solid var(--line);
+    }
+
+    .judgment-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .label-title {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .judgment-text {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 18px;
+      line-height: 1.45;
+    }
+
+    .judgment-change {
+      margin: 13px 0 0;
+      padding: 10px 0 0 13px;
+      color: var(--ink-soft);
+      border-left: 2px solid var(--signal);
+      font-size: 11px;
+    }
+
+    .next-check {
+      padding: 19px 20px;
+      background: #f3eee3;
+    }
+
+    .validation-list {
+      display: grid;
+      gap: 9px;
+      margin: 10px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .validation-item {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      color: var(--ink-soft);
+      font-size: 11px;
+    }
+
+    .validation-item input {
+      margin-top: 3px;
+      accent-color: var(--signal);
+    }
+
+    .validation-add {
+      width: 100%;
+      margin-top: 11px;
+      padding: 8px 9px;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 1px dashed var(--line-strong);
+      cursor: pointer;
+      font-size: 10px;
+      text-align: left;
+    }
+
+    .validation-add:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, .45);
+    }
+
+    .my-view {
+      display: grid;
+      grid-template-columns: 145px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 13px 20px;
+      background: #ede7da;
+      border-top: 1px solid var(--line);
+    }
+
+    .my-view-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .my-view select,
+    .my-view input,
+    .note-editor textarea,
+    .modal input,
+    .modal textarea {
+      width: 100%;
+      color: var(--ink);
+      background: var(--surface-raised);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+    }
+
+    .my-view select,
+    .my-view input {
+      height: 35px;
+      padding: 0 10px;
+    }
+
+    .question-expand-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 10px;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--line);
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .question-expand-toggle:hover {
+      background: rgba(255, 255, 255, .5);
+    }
+
+    .question-expanded {
+      display: none;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--line);
+      border-top: 1px solid var(--line);
+    }
+
+    .research-question-card.expanded .question-expanded {
+      display: grid;
+    }
+
+    .research-question-card.expanded .question-expand-toggle .icon {
+      transform: rotate(180deg);
+    }
+
+    .evidence-column {
+      min-height: 190px;
+      padding: 17px;
+      background: var(--surface-raised);
+    }
+
+    .evidence-column h4 {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 0 12px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .evidence-column.support h4 {
+      color: var(--positive);
+    }
+
+    .evidence-column.counter h4 {
+      color: var(--signal);
+    }
+
+    .evidence-column.unknown h4 {
+      color: var(--warning);
+    }
+
+    .evidence-list {
+      display: grid;
+      gap: 9px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .evidence-list button {
+      width: 100%;
+      padding: 9px;
+      color: var(--ink-soft);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      cursor: pointer;
+      font-size: 10px;
+      line-height: 1.45;
+      text-align: left;
+    }
+
+    .evidence-list button:hover {
+      color: var(--ink);
+      border-color: var(--ink-soft);
+    }
+
+    .note-editor {
+      display: none;
+      padding: 15px 20px 19px;
+      background: #e8e0d1;
+      border-top: 1px solid var(--line);
+    }
+
+    .research-question-card.editing-note .note-editor {
+      display: block;
+    }
+
+    .note-editor textarea {
+      min-height: 105px;
+      padding: 12px;
+      resize: vertical;
+      line-height: 1.55;
+    }
+
+    .note-editor-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 9px;
+    }
+
+    .data-panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }
+
+    .data-tabs,
+    .drawer-tabs {
+      display: flex;
+      align-items: stretch;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tab-button {
+      position: relative;
+      min-width: 110px;
+      padding: 12px 15px;
+      color: var(--ink-faint);
+      background: transparent;
+      border: 0;
+      border-right: 1px solid var(--line);
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .tab-button.active {
+      color: var(--ink);
+      background: var(--surface-raised);
+    }
+
+    .tab-button.active::after {
+      content: "";
+      position: absolute;
+      right: 12px;
+      bottom: -1px;
+      left: 12px;
+      height: 2px;
+      background: var(--signal);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .tracking-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+
+    .tracking-table th {
+      padding: 10px 12px;
+      color: var(--ink-faint);
+      background: #eee8dc;
+      border-bottom: 1px solid var(--line);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .05em;
+      text-align: left;
+      text-transform: uppercase;
+    }
+
+    .tracking-table td {
+      padding: 13px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    .tracking-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .tracking-table tbody tr:hover {
+      background: var(--surface-raised);
+    }
+
+    .table-title {
+      font-weight: 700;
+    }
+
+    .table-subtitle {
+      margin-top: 3px;
+      color: var(--ink-faint);
+      font-size: 9px;
+    }
+
+    .timeline {
+      position: relative;
+      margin: 0;
+      padding: 0 0 0 20px;
+      list-style: none;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      top: 7px;
+      bottom: 8px;
+      left: 4px;
+      width: 1px;
+      background: var(--line-strong);
+    }
+
+    .timeline-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 105px minmax(0, 1fr) auto;
+      gap: 16px;
+      padding: 0 0 20px;
+    }
+
+    .timeline-item::before {
+      content: "";
+      position: absolute;
+      top: 6px;
+      left: -20px;
+      width: 9px;
+      height: 9px;
+      background: var(--surface);
+      border: 2px solid var(--signal);
+      border-radius: 50%;
+    }
+
+    .timeline-date {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    .timeline-title {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 17px;
+    }
+
+    .timeline-copy {
+      margin: 5px 0 0;
+      color: var(--ink-soft);
+      font-size: 11px;
+    }
+
+    .metrics-panel {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      min-height: 420px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }
+
+    .metric-list {
+      border-right: 1px solid var(--line);
+    }
+
+    .metric-item {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 13px 15px;
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .metric-item:hover,
+    .metric-item.active {
+      background: var(--surface-raised);
+    }
+
+    .metric-item.active {
+      box-shadow: inset 3px 0 var(--signal);
+    }
+
+    .metric-name {
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .metric-source {
+      margin-top: 2px;
+      color: var(--ink-faint);
+      font-size: 9px;
+    }
+
+    .metric-value {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-align: right;
+    }
+
+    .metric-value em {
+      display: block;
+      color: var(--positive);
+      font-size: 9px;
+      font-style: normal;
+    }
+
+    .metric-canvas {
+      padding: 24px;
+    }
+
+    .metric-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .metric-big-number {
+      margin-top: 6px;
+      font-family: var(--font-display);
+      font-size: 42px;
+      line-height: 1;
+    }
+
+    .metric-big-number small {
+      color: var(--ink-faint);
+      font-family: var(--font-body);
+      font-size: 12px;
+    }
+
+    .metric-chart-wrap {
+      position: relative;
+      height: 230px;
+      margin-top: 25px;
+      padding: 10px 8px 24px 42px;
+      border-left: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .bar-chart {
+      height: 100%;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 14px;
+      align-items: end;
+    }
+
+    .bar-column {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: stretch;
+      gap: 6px;
+    }
+
+    .bar-value {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 8px;
+      text-align: center;
+    }
+
+    .bar {
+      position: relative;
+      min-height: 10px;
+      background: var(--ink);
+      transition: .2s ease;
+    }
+
+    .bar:hover {
+      background: var(--signal);
+    }
+
+    .bar.latest {
+      background: var(--signal);
+    }
+
+    .bar-label {
+      position: absolute;
+      bottom: -21px;
+      left: 50%;
+      width: 44px;
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 8px;
+      text-align: center;
+      transform: translateX(-50%);
+    }
+
+    .chart-axis-label {
+      position: absolute;
+      top: -8px;
+      left: -1px;
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 8px;
+      transform: translateX(-100%);
+    }
+
+    .metric-annotation {
+      display: grid;
+      grid-template-columns: 130px minmax(0, 1fr);
+      gap: 13px;
+      margin-top: 23px;
+      padding-top: 15px;
+      border-top: 1px solid var(--line);
+    }
+
+    .metric-annotation strong {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .metric-annotation p {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 11px;
+    }
+
+    .financial-disclosure {
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }
+
+    .disclosure-head {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 16px 18px;
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .disclosure-title {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .disclosure-copy {
+      margin-top: 3px;
+      color: var(--ink-faint);
+      font-size: 10px;
+    }
+
+    .disclosure-content {
+      display: none;
+      overflow-x: auto;
+      border-top: 1px solid var(--line);
+    }
+
+    .financial-disclosure.open .disclosure-content {
+      display: block;
+    }
+
+    .financial-disclosure.open .disclosure-head .icon {
+      transform: rotate(180deg);
+    }
+
+    .financial-table {
+      min-width: 860px;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+    }
+
+    .financial-table th,
+    .financial-table td {
+      padding: 10px 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      text-align: right;
+    }
+
+    .financial-table th:first-child,
+    .financial-table td:first-child {
+      position: sticky;
+      left: 0;
+      min-width: 180px;
+      background: var(--surface);
+      text-align: left;
+      z-index: 2;
+    }
+
+    .financial-table th {
+      color: var(--ink-faint);
+      background: #eee8dc;
+      font-family: var(--font-mono);
+      font-size: 8px;
+    }
+
+    .compare-only {
+      display: none;
+    }
+
+    body.compare-mode .compare-only {
+      display: inline;
+    }
+
+    body.compare-mode .comparison-highlight {
+      background: #fff0e8;
+      box-shadow: inset 3px 0 var(--signal);
+    }
+
+    .evidence-drawer {
+      position: fixed;
+      z-index: 50;
+      top: var(--header-h);
+      right: 0;
+      bottom: 0;
+      width: var(--drawer-w);
+      display: flex;
+      flex-direction: column;
+      background: var(--surface-raised);
+      border-left: 1px solid var(--line-strong);
+      box-shadow: var(--shadow);
+      transform: translateX(102%);
+      transition: transform .25s ease;
+    }
+
+    body.drawer-open .evidence-drawer {
+      transform: translateX(0);
+    }
+
+    .drawer-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 15px;
+      padding: 18px 19px 15px;
+      background: var(--paper-deep);
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .drawer-title {
+      margin: 4px 0 0;
+      font-family: var(--font-display);
+      font-size: 23px;
+      line-height: 1.2;
+    }
+
+    .drawer-tabs .tab-button {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .drawer-panel {
+      display: none;
+      padding: 17px 18px 32px;
+    }
+
+    .drawer-panel.active {
+      display: block;
+    }
+
+    .chain-group {
+      margin-bottom: 20px;
+    }
+
+    .chain-group-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 9px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid var(--line);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .chain-count {
+      color: var(--ink-faint);
+    }
+
+    .chain-item {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 26px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: start;
+      padding: 11px 0;
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .chain-item:hover .chain-item-title {
+      color: var(--signal);
+    }
+
+    .chain-index {
+      display: grid;
+      place-items: center;
+      width: 23px;
+      height: 23px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      font-family: var(--font-mono);
+      font-size: 8px;
+    }
+
+    .chain-item-title {
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .chain-item-meta {
+      margin-top: 3px;
+      color: var(--ink-faint);
+      font-size: 9px;
+    }
+
+    .unknown-card {
+      padding: 12px;
+      color: var(--warning);
+      background: var(--warning-soft);
+      border-left: 3px solid var(--warning);
+      font-size: 10px;
+    }
+
+    .source-document {
+      margin-bottom: 16px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .source-document-title {
+      margin: 6px 0 0;
+      font-family: var(--font-display);
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .source-meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .source-meta {
+      padding: 8px;
+      background: var(--paper-deep);
+    }
+
+    .source-meta dt {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 8px;
+      text-transform: uppercase;
+    }
+
+    .source-meta dd {
+      margin: 3px 0 0;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .quote-block {
+      margin: 16px 0;
+      padding: 15px 15px 15px 18px;
+      background: #eeeadf;
+      border-left: 3px solid var(--ink);
+      font-family: var(--font-display);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .translation-block {
+      margin: 12px 0;
+      padding: 12px;
+      color: var(--ink-soft);
+      background: #f6f2e8;
+      border: 1px solid var(--line);
+      font-size: 11px;
+    }
+
+    .formula-box {
+      padding: 15px;
+      background: #182220;
+      color: #edf1ed;
+      border: 1px solid #0b1110;
+    }
+
+    .formula-expression {
+      margin: 12px 0;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .formula-result {
+      color: #ffb9a9;
+      font-family: var(--font-display);
+      font-size: 32px;
+    }
+
+    .formula-inputs {
+      margin-top: 13px;
+      border-top: 1px solid rgba(255, 255, 255, .2);
+    }
+
+    .formula-input {
+      display: flex;
+      justify-content: space-between;
+      gap: 15px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, .13);
+      font-size: 10px;
+    }
+
+    .drawer-foot {
+      display: flex;
+      gap: 8px;
+      padding: 12px 18px;
+      background: var(--paper-deep);
+      border-top: 1px solid var(--line-strong);
+    }
+
+    .drawer-foot .secondary-button,
+    .drawer-foot .primary-button {
+      flex: 1;
+    }
+
+    .ai-assistant {
+      position: fixed;
+      z-index: 55;
+      right: 24px;
+      bottom: 22px;
+    }
+
+    body.drawer-open .ai-assistant {
+      right: calc(var(--drawer-w) + 24px);
+    }
+
+    .ai-launcher {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--signal);
+      border: 0;
+      border-radius: 50%;
+      box-shadow: 0 10px 24px rgba(137, 43, 24, .28);
+      cursor: pointer;
+    }
+
+    .ai-launcher:hover {
+      transform: translateY(-2px);
+    }
+
+    .ai-panel {
+      position: absolute;
+      right: 0;
+      bottom: 64px;
+      width: 390px;
+      display: none;
+      overflow: hidden;
+      background: var(--surface-raised);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .ai-assistant.open .ai-panel {
+      display: block;
+      animation: panelIn .18s ease-out both;
+    }
+
+    @keyframes panelIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .ai-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 15px;
+      color: #fff;
+      background: var(--ink);
+    }
+
+    .ai-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-display);
+      font-size: 16px;
+    }
+
+    .ai-context {
+      padding: 9px 14px;
+      color: var(--positive);
+      background: var(--positive-soft);
+      border-bottom: 1px solid #b8d3c8;
+      font-size: 9px;
+    }
+
+    .ai-messages {
+      max-height: 390px;
+      min-height: 250px;
+      overflow-y: auto;
+      padding: 14px;
+    }
+
+    .suggestion-grid {
+      display: grid;
+      gap: 7px;
+      margin-bottom: 14px;
+    }
+
+    .suggestion-button {
+      padding: 9px 10px;
+      color: var(--ink-soft);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      cursor: pointer;
+      font-size: 10px;
+      text-align: left;
+    }
+
+    .suggestion-button:hover {
+      color: var(--ink);
+      border-color: var(--signal);
+    }
+
+    .chat-bubble {
+      max-width: 92%;
+      margin-bottom: 11px;
+      padding: 10px 11px;
+      border-radius: 2px;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .chat-bubble.user {
+      margin-left: auto;
+      color: #fff;
+      background: var(--ink);
+    }
+
+    .chat-bubble.assistant {
+      background: #eee9de;
+      border-left: 2px solid var(--signal);
+    }
+
+    .chat-citation {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin: 7px 5px 0 0;
+      padding: 3px 6px;
+      color: var(--focus);
+      background: #e5ecf7;
+      border: 0;
+      cursor: pointer;
+      font-size: 8px;
+    }
+
+    .chat-track-action {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 10px;
+      padding-top: 9px;
+      border-top: 1px solid var(--line);
+    }
+
+    .ai-composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 40px;
+      gap: 7px;
+      padding: 10px;
+      background: var(--paper-deep);
+      border-top: 1px solid var(--line);
+    }
+
+    .ai-composer input {
+      min-width: 0;
+      height: 39px;
+      padding: 0 11px;
+      color: var(--ink);
+      background: var(--surface-raised);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+    }
+
+    .ai-composer button {
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--signal);
+      border: 0;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      z-index: 80;
+      inset: 0;
+      display: none;
+      place-items: center;
+      padding: 30px;
+      background: rgba(16, 22, 20, .62);
+    }
+
+    .modal-backdrop.open {
+      display: grid;
+    }
+
+    .modal {
+      width: min(620px, 100%);
+      max-height: calc(100vh - 60px);
+      overflow-y: auto;
+      background: var(--surface-raised);
+      border: 1px solid var(--line-strong);
+      border-top: 5px solid var(--signal);
+      box-shadow: var(--shadow);
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 19px 21px 15px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .modal-title {
+      margin: 4px 0 0;
+      font-family: var(--font-display);
+      font-size: 26px;
+      line-height: 1.2;
+    }
+
+    .modal-body {
+      padding: 19px 21px 22px;
+    }
+
+    .field {
+      margin-bottom: 15px;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .field input,
+    .field textarea {
+      padding: 10px 11px;
+    }
+
+    .field textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 13px 21px;
+      background: var(--paper-deep);
+      border-top: 1px solid var(--line);
+    }
+
+    .run-summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-bottom: 18px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+
+    .run-summary > div {
+      padding: 10px;
+      background: var(--surface);
+    }
+
+    .run-summary strong {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 19px;
+    }
+
+    .run-summary span {
+      color: var(--ink-faint);
+      font-size: 9px;
+    }
+
+    .run-steps {
+      display: grid;
+      gap: 8px;
+    }
+
+    .run-step {
+      display: grid;
+      grid-template-columns: 27px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 11px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }
+
+    .run-step-index {
+      width: 25px;
+      height: 25px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      font-family: var(--font-mono);
+      font-size: 8px;
+    }
+
+    .run-step.running {
+      border-color: var(--warning);
+      background: var(--warning-soft);
+    }
+
+    .run-step.done .run-step-index {
+      color: #fff;
+      background: var(--positive);
+      border-color: var(--positive);
+    }
+
+    .run-step-status {
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 9px;
+    }
+
+    .sync-progress {
+      height: 6px;
+      margin: 16px 0;
+      overflow: hidden;
+      background: var(--paper-deep);
+    }
+
+    .sync-progress span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: var(--signal);
+      transition: width .4s ease;
+    }
+
+    .command-results {
+      display: grid;
+      gap: 5px;
+      margin-top: 14px;
+    }
+
+    .command-result {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .command-result:hover {
+      border-color: var(--signal);
+    }
+
+    .command-result kbd {
+      margin-left: auto;
+      color: var(--ink-faint);
+      font-family: var(--font-mono);
+      font-size: 8px;
+    }
+
+    .toast-region {
+      position: fixed;
+      z-index: 100;
+      right: 22px;
+      top: calc(var(--header-h) + 18px);
+      display: grid;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      min-width: 280px;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 9px;
+      align-items: center;
+      padding: 11px 13px;
+      color: #fff;
+      background: var(--ink);
+      border-left: 4px solid var(--positive);
+      box-shadow: var(--shadow);
+      animation: toastIn .2s ease-out both;
+      font-size: 11px;
+    }
+
+    .toast.warning {
+      border-left-color: var(--warning);
+    }
+
+    @keyframes toastIn {
+      from {
+        opacity: 0;
+        transform: translateX(14px);
+      }
+    }
+
+    .loading-dots {
+      display: inline-flex;
+      gap: 4px;
+      padding: 8px 0;
+    }
+
+    .loading-dots span {
+      width: 5px;
+      height: 5px;
+      background: var(--ink-faint);
+      border-radius: 50%;
+      animation: pulse 1s infinite ease-in-out;
+    }
+
+    .loading-dots span:nth-child(2) {
+      animation-delay: .13s;
+    }
+
+    .loading-dots span:nth-child(3) {
+      animation-delay: .26s;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: .25; transform: translateY(0); }
+      50% { opacity: 1; transform: translateY(-3px); }
+    }
+
+    @media (max-width: 1180px) {
+      :root {
+        --rail-w: 250px;
+      }
+
+      .search-trigger {
+        min-width: 52px;
+      }
+
+      .search-trigger span,
+      .search-trigger kbd,
+      .header-action span {
+        display: none;
+      }
+
+      .workspace {
+        width: calc(100vw - var(--rail-w) - 34px);
+      }
+
+      .change-card,
+      .change-card.primary-change {
+        grid-column: span 6;
+      }
+
+      .question-core {
+        grid-template-columns: 1fr;
+      }
+
+      .ai-judgment {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+    }
+
+    @media (max-width: 860px) {
+      :root {
+        --header-h: 62px;
+        --rail-w: 0px;
+        --drawer-w: min(100vw, 430px);
+      }
+
+      .masthead {
+        grid-template-columns: 62px minmax(0, 1fr) auto;
+      }
+
+      .brand {
+        justify-content: center;
+        padding: 0;
+      }
+
+      .brand-copy {
+        display: none;
+      }
+
+      .research-rail {
+        display: none;
+      }
+
+      .company-switcher {
+        padding: 0 10px;
+      }
+
+      .workspace {
+        width: calc(100vw - 26px);
+        padding-top: 23px;
+      }
+
+      .workspace-header {
+        grid-template-columns: 1fr;
+      }
+
+      .header-controls {
+        min-width: 0;
+      }
+
+      .snapshot-ribbon {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .ribbon-cell:nth-child(3) {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .ribbon-cell:nth-child(4) {
+        border-top: 1px solid var(--line);
+      }
+
+      .change-card,
+      .change-card.primary-change {
+        grid-column: 1 / -1;
+      }
+
+      .change-card.expanded .change-detail,
+      .question-expanded {
+        grid-template-columns: 1fr;
+      }
+
+      .ledger-row {
+        grid-template-columns: 1fr;
+      }
+
+      .ledger-arrow {
+        transform: rotate(90deg);
+      }
+
+      .my-view {
+        grid-template-columns: 1fr;
+      }
+
+      .metrics-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-list {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .timeline-item {
+        grid-template-columns: 1fr;
+        gap: 5px;
+      }
+
+      .ai-panel {
+        position: fixed;
+        right: 12px;
+        bottom: 82px;
+        width: calc(100vw - 24px);
+      }
+
+      body.drawer-open .app-main {
+        margin-right: 0;
+      }
+
+      body.drawer-open .ai-assistant {
+        right: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">E</div>
+      <div class="brand-copy">
+        <div class="brand-name">Evidence Desk</div>
+        <div class="brand-subtitle">Company research ledger</div>
+      </div>
+    </div>
+
+    <div class="company-switcher">
+      <button class="company-button" id="company-switcher" type="button" aria-label="切换公司">
+        <span class="ticker-block">PDD</span>
+        <span>
+          <span class="company-title">PDD Holdings Inc.</span>
+          <span class="company-meta">
+            <span>NASDAQ · ADR · USD</span>
+            <span class="demo-flag">交互原型 · 演示数据</span>
+          </span>
+        </span>
+        <i data-lucide="chevron-down" class="icon icon-sm" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="masthead-actions">
+      <button class="search-trigger" id="command-trigger" type="button">
+        <i data-lucide="search" class="icon" aria-hidden="true"></i>
+        <span>搜索指标、结论或证据</span>
+        <kbd>⌘ K</kbd>
+      </button>
+      <button class="header-action has-dot" id="open-run-status" type="button" title="查看最近同步运行">
+        <i data-lucide="activity" class="icon-lg" aria-hidden="true"></i>
+        <span>运行</span>
+      </button>
+      <button class="header-action" id="open-ai-header" type="button" title="打开研究问答">
+        <i data-lucide="message-square-text" class="icon-lg" aria-hidden="true"></i>
+        <span>追问</span>
+      </button>
+    </div>
+  </header>
+
+  <aside class="research-rail" aria-label="研究问题导航">
+    <div class="rail-head">
+      <div class="eyebrow">Research questions</div>
+      <div class="rail-title-row">
+        <h2 class="rail-title">研究问题</h2>
+        <button class="icon-button" id="add-question-button" type="button" data-tooltip="新增研究问题" aria-label="新增研究问题">
+          <i data-lucide="plus" class="icon" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="rail-stats">
+        <div class="rail-stat">
+          <strong>5</strong>
+          <span>跟踪中</span>
+        </div>
+        <div class="rail-stat">
+          <strong style="color: var(--signal)">2</strong>
+          <span>判断变化</span>
+        </div>
+        <div class="rail-stat">
+          <strong>3</strong>
+          <span>待阅读</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="question-nav" id="question-nav">
+      <div class="nav-group-label">
+        <i data-lucide="pin" class="icon icon-sm" aria-hidden="true"></i>
+        已置顶
+      </div>
+      <button class="research-nav-item active" type="button" data-target="question-overseas">
+        <span class="status-dot improving"></span>
+        <span>
+          <span class="nav-question-title">海外业务投入是否带来可持续增长？</span>
+          <span class="nav-question-meta"><span class="unread-dot"></span>判断变化 · 3 条新证据</span>
+        </span>
+        <i data-lucide="pin" class="icon icon-sm nav-pin" aria-hidden="true"></i>
+      </button>
+      <button class="research-nav-item" type="button" data-target="question-margin">
+        <span class="status-dot deteriorating"></span>
+        <span>
+          <span class="nav-question-title">高投入对利润率和现金流造成什么影响？</span>
+          <span class="nav-question-meta"><span class="unread-dot"></span>判断变化 · 2 条新证据</span>
+        </span>
+        <i data-lucide="pin" class="icon icon-sm nav-pin" aria-hidden="true"></i>
+      </button>
+
+      <div class="nav-group-label">
+        <i data-lucide="list-tree" class="icon icon-sm" aria-hidden="true"></i>
+        其他问题
+      </div>
+      <button class="research-nav-item" type="button" data-target="question-growth">
+        <span class="status-dot unchanged"></span>
+        <span>
+          <span class="nav-question-title">收入增长的主要驱动力是否发生变化？</span>
+          <span class="nav-question-meta">判断未变 · 已阅读</span>
+        </span>
+      </button>
+      <button class="research-nav-item" type="button" data-target="question-guidance">
+        <span class="status-dot insufficient"></span>
+        <span>
+          <span class="nav-question-title">管理层明确指引是否兑现？</span>
+          <span class="nav-question-meta"><span class="unread-dot"></span>1 项待验证</span>
+        </span>
+      </button>
+      <button class="research-nav-item" type="button" data-target="question-risk">
+        <span class="status-dot deteriorating"></span>
+        <span>
+          <span class="nav-question-title">海外监管与合规风险是否加剧？</span>
+          <span class="nav-question-meta">新增风险信号 · 已阅读</span>
+        </span>
+      </button>
+    </nav>
+
+    <div class="rail-foot">
+      <div class="coverage-row">
+        <span>官方来源覆盖</span>
+        <span class="coverage-score">11 / 12</span>
+      </div>
+      <div class="coverage-bar" aria-label="官方来源覆盖率 92%"><span></span></div>
+      <button class="coverage-link" type="button" data-open-evidence="coverage">
+        <span>1 份业绩会文本未获取，分析范围受限</span>
+        <i data-lucide="arrow-up-right" class="icon icon-sm" aria-hidden="true"></i>
+      </button>
+    </div>
+  </aside>
+
+  <main class="app-main">
+    <div class="workspace">
+      <section class="workspace-header" aria-labelledby="page-title">
+        <div>
+          <div class="workspace-kicker">
+            <span class="live-status">正式快照已发布</span>
+            <span>·</span>
+            <span id="snapshot-id">SNAPSHOT PDD-2026-Q1-04</span>
+          </div>
+          <h1 class="workspace-title" id="page-title">最新变化先于结论，证据先于叙事。</h1>
+          <p class="workspace-subtitle">
+            本页比较当前报告期与上一期官方披露，优先展示会改变经营理解的变化。所有数据均为交互演示，不代表真实公司数据或投资建议。
+          </p>
+        </div>
+
+        <div class="header-controls">
+          <label class="control-label" for="period-select">研究快照</label>
+          <div class="select-shell">
+            <select id="period-select">
+              <option value="2026Q1">2026 Q1 · 最新</option>
+              <option value="2025Q4">2025 Q4 · FY2025</option>
+              <option value="2025Q3">2025 Q3</option>
+              <option value="2025Q2">2025 Q2</option>
+            </select>
+            <i data-lucide="chevron-down" class="icon" aria-hidden="true"></i>
+          </div>
+          <div class="control-row">
+            <button class="switch-button" id="compare-toggle" type="button" aria-pressed="false">
+              <span>对比上一期</span>
+              <span class="switch-track" aria-hidden="true"></span>
+            </button>
+            <button class="primary-button" id="sync-button" type="button">
+              <i data-lucide="refresh-cw" class="icon icon-sm" aria-hidden="true"></i>
+              同步官方材料
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div class="snapshot-ribbon" aria-label="快照状态">
+        <div class="ribbon-cell">
+          <div class="ribbon-label">数据截止</div>
+          <div class="ribbon-value" id="cutoff-date">2026-05-28 18:40 CST</div>
+        </div>
+        <div class="ribbon-cell">
+          <div class="ribbon-label">最新官方披露</div>
+          <div class="ribbon-value">Q1 Results 6-K <span class="subtle">· 12h ago</span></div>
+        </div>
+        <div class="ribbon-cell">
+          <div class="ribbon-label">来源覆盖</div>
+          <div class="ribbon-value"><span style="color: var(--positive)">关键材料完整</span> · 补充材料 1 缺失</div>
+        </div>
+        <div class="ribbon-cell">
+          <div class="ribbon-label">分析版本</div>
+          <div class="ribbon-value">Workflow v0.7.3 <span class="subtle">· 42 checks passed</span></div>
+        </div>
+      </div>
+
+      <section class="section" id="major-changes">
+        <div class="section-heading">
+          <div>
+            <div class="section-index">01 / WHAT CHANGED</div>
+            <h2 class="section-title">本期最重要的变化</h2>
+            <p class="section-description">只有会改变研究判断、影响置顶问题或验证管理层承诺的变化才进入这里。</p>
+          </div>
+          <div class="section-actions">
+            <button class="secondary-button compact-button" type="button" data-open-evidence="change-overall">
+              <i data-lucide="files" class="icon icon-sm" aria-hidden="true"></i>
+              查看全部 14 条变化
+            </button>
+          </div>
+        </div>
+
+        <div class="change-grid">
+          <article class="change-card primary-change comparison-highlight">
+            <div class="change-card-head">
+              <span class="change-rank">CHANGE 01 · 改变判断</span>
+              <span class="evidence-tag official"><i data-lucide="landmark" class="icon icon-sm"></i>官方披露</span>
+            </div>
+            <div class="change-body">
+              <h3 class="change-title">海外相关投入仍在扩大，但收入增量开始覆盖部分新增投入。</h3>
+              <p class="change-summary">
+                交易服务收入与履约相关成本同步上升，经营利润率继续承压；和上一期相比，增长质量从“投入换规模”向“投入开始形成收入闭环”轻微改善。
+              </p>
+              <div class="number-comparison">
+                <span class="number-current">+38.6%</span>
+                <span class="number-previous compare-only">+31.2%</span>
+                <span class="number-delta">同比增速 +7.4pp</span>
+              </div>
+              <svg class="mini-chart" viewBox="0 0 600 60" preserveAspectRatio="none" role="img" aria-label="交易服务收入八季度趋势">
+                <line class="gridline" x1="0" y1="50" x2="600" y2="50"></line>
+                <path class="trend trend-positive" d="M0 50 C70 49, 72 42, 140 43 S220 32, 280 36 S360 29, 420 30 S510 11, 600 8"></path>
+              </svg>
+            </div>
+            <div class="change-foot">
+              <span class="change-question-link">影响问题：海外业务投入是否带来可持续增长？</span>
+              <span style="display: flex; gap: 12px">
+                <button class="inline-link expand-change" type="button">展开分析 <i data-lucide="chevron-down" class="icon icon-sm"></i></button>
+                <button class="inline-link" type="button" data-open-evidence="overseas-growth">查看证据 <i data-lucide="arrow-right" class="icon icon-sm"></i></button>
+              </span>
+            </div>
+            <div class="change-detail">
+              <div class="detail-column">
+                <h4>发生了什么</h4>
+                <p>交易服务收入同比增长 38.6%，履约及支付处理相关成本同比增长 29.4%，两者增速差由 -4.1pp 转为 +9.2pp。</p>
+              </div>
+              <div class="detail-column management">
+                <h4>管理层怎么解释</h4>
+                <p>公司称海外业务仍处于投资阶段，但商家生态和履约效率改善开始支持收入增长。该表述没有披露海外独立收入。</p>
+              </div>
+              <div class="detail-column ai">
+                <h4>AI 如何判断</h4>
+                <p>数据支持“收入增量开始覆盖部分投入”，但不足以证明海外业务已实现单位经济盈利。当前判断从证据不足调整为轻微改善。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="change-card comparison-highlight">
+            <div class="change-card-head">
+              <span class="change-rank">CHANGE 02 · 风险加剧</span>
+              <span class="evidence-tag official"><i data-lucide="landmark" class="icon icon-sm"></i>官方披露</span>
+            </div>
+            <div class="change-body">
+              <h3 class="change-title">经营利润率连续第三个季度下降。</h3>
+              <p class="change-summary">营销与履约投入增速高于毛利润增速，短期盈利质量继续承压。</p>
+              <div class="number-comparison">
+                <span class="number-current">18.2%</span>
+                <span class="number-previous compare-only">21.7%</span>
+                <span class="number-delta">-3.5pp</span>
+              </div>
+              <svg class="mini-chart" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="经营利润率趋势">
+                <line class="gridline" x1="0" y1="50" x2="300" y2="50"></line>
+                <path class="trend" d="M0 12 C50 9, 65 20, 105 18 S160 28, 195 29 S250 42, 300 47"></path>
+              </svg>
+            </div>
+            <div class="change-foot">
+              <span class="change-question-link">影响问题：高投入对利润率和现金流造成什么影响？</span>
+              <button class="inline-link" type="button" data-open-evidence="margin-pressure">证据 <i data-lucide="arrow-right" class="icon icon-sm"></i></button>
+            </div>
+          </article>
+
+          <article class="change-card">
+            <div class="change-card-head">
+              <span class="change-rank">CHANGE 03 · 指引验证</span>
+              <span class="evidence-tag analysis"><i data-lucide="brain-circuit" class="icon icon-sm"></i>分析判断</span>
+            </div>
+            <div class="change-body">
+              <h3 class="change-title">“保持高投入”已兑现，但投入效率仍暂不可验证。</h3>
+              <p class="change-summary">管理层定性承诺得到费用数据支持；没有给出可量化效率目标。</p>
+              <div class="number-comparison">
+                <span class="number-current">部分兑现</span>
+              </div>
+            </div>
+            <div class="change-foot">
+              <span class="change-question-link">影响问题：管理层明确指引是否兑现？</span>
+              <button class="inline-link" type="button" data-open-evidence="guidance-check">证据 <i data-lucide="arrow-right" class="icon icon-sm"></i></button>
+            </div>
+          </article>
+
+          <article class="change-card">
+            <div class="change-card-head">
+              <span class="change-rank">CHANGE 04 · 新增事件</span>
+              <span class="evidence-tag official"><i data-lucide="landmark" class="icon icon-sm"></i>官方披露</span>
+            </div>
+            <div class="change-body">
+              <h3 class="change-title">欧盟监管调查范围扩大，新增平台治理披露要求。</h3>
+              <p class="change-summary">当前没有量化财务影响，但合规投入和业务调整不确定性上升。</p>
+              <div class="number-comparison">
+                <span class="number-current">风险加剧</span>
+              </div>
+            </div>
+            <div class="change-foot">
+              <span class="change-question-link">影响问题：海外监管与合规风险是否加剧？</span>
+              <button class="inline-link" type="button" data-open-evidence="regulatory-risk">证据 <i data-lucide="arrow-right" class="icon icon-sm"></i></button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="judgment-changes">
+        <div class="section-heading">
+          <div>
+            <div class="section-index">02 / JUDGMENT LEDGER</div>
+            <h2 class="section-title">判断变化账本</h2>
+            <p class="section-description">不覆盖旧结论，明确记录判断从什么变成什么，以及改变它的新证据。</p>
+          </div>
+        </div>
+
+        <div class="judgment-ledger">
+          <div class="ledger-head">
+            <h3 class="ledger-title">本期 2 项判断改变，3 项保持不变</h3>
+            <span class="ledger-count">VERSUS 2025 Q4</span>
+          </div>
+          <div class="ledger-row">
+            <div class="ledger-question">海外业务投入与增长</div>
+            <div class="ledger-old">证据不足：投入与收入无法建立联系</div>
+            <i data-lucide="arrow-right" class="icon ledger-arrow" aria-hidden="true"></i>
+            <div class="ledger-new">轻微改善：收入增速开始超过相关成本增速</div>
+            <span class="status-tag improving">改善</span>
+          </div>
+          <div class="ledger-row">
+            <div class="ledger-question">利润率与现金流</div>
+            <div class="ledger-old">基本不变：投入可被现金流覆盖</div>
+            <i data-lucide="arrow-right" class="icon ledger-arrow" aria-hidden="true"></i>
+            <div class="ledger-new">恶化：利润率连续下降，自由现金流转弱</div>
+            <span class="status-tag deteriorating">恶化</span>
+          </div>
+          <div class="ledger-row">
+            <div class="ledger-question">收入增长驱动力</div>
+            <div class="ledger-old">交易服务收入继续贡献主要增量</div>
+            <i data-lucide="equal" class="icon ledger-arrow" aria-hidden="true"></i>
+            <div class="ledger-new">交易服务收入仍是主要增量来源</div>
+            <span class="status-tag unchanged">不变</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="research-questions">
+        <div class="section-heading">
+          <div>
+            <div class="section-index">03 / RESEARCH QUESTIONS</div>
+            <h2 class="section-title">研究问题与验证条件</h2>
+            <p class="section-description">指标是证据，研究问题才是组织信息和持续复盘的主线。</p>
+          </div>
+          <div class="section-actions">
+            <button class="secondary-button compact-button" type="button" id="mark-all-read">
+              <i data-lucide="check-check" class="icon icon-sm"></i>
+              全部标为已读
+            </button>
+          </div>
+        </div>
+
+        <div class="question-stack">
+          <article class="research-question-card comparison-highlight" id="question-overseas" data-question-title="海外业务投入是否带来可持续增长？">
+            <div class="question-card-head">
+              <div>
+                <div class="question-number">RQ 01 · 用户置顶 · 本期判断变化</div>
+                <h3 class="question-title">海外业务投入是否带来可持续增长？</h3>
+              </div>
+              <div class="question-head-actions">
+                <span class="status-tag improving">改善</span>
+                <button class="icon-button mark-read-button" type="button" data-tooltip="标记为已读" aria-label="标记为已读">
+                  <i data-lucide="circle-check-big" class="icon" aria-hidden="true"></i>
+                </button>
+                <button class="icon-button pin-button" type="button" data-tooltip="取消置顶" aria-label="取消置顶" aria-pressed="true">
+                  <i data-lucide="pin" class="icon" aria-hidden="true"></i>
+                </button>
+                <button class="icon-button note-button" type="button" data-tooltip="编辑我的判断" aria-label="编辑我的判断">
+                  <i data-lucide="notebook-pen" class="icon" aria-hidden="true"></i>
+                </button>
+              </div>
+            </div>
+            <div class="question-core">
+              <div class="ai-judgment">
+                <div class="judgment-label">
+                  <span class="label-title">AI 当前判断</span>
+                  <span class="evidence-tag analysis"><i data-lucide="brain-circuit" class="icon icon-sm"></i>分析判断</span>
+                </div>
+                <p class="judgment-text">海外相关收入增长开始快于相关成本增长，但官方未单独披露海外收入和利润，尚不能证明该业务已形成可持续单位经济。</p>
+                <p class="judgment-change"><strong>本期变化：</strong>从“证据不足”调整为“改善”。新增支持证据是交易服务收入增速与履约成本增速差转正；反面证据是经营利润率仍下降。</p>
+              </div>
+              <div class="next-check">
+                <div class="judgment-label">
+                  <span class="label-title">下期验证条件</span>
+                  <span style="color: var(--ink-faint); font-size: 9px">2 / 3 已确认</span>
+                </div>
+                <ul class="validation-list">
+                  <li class="validation-item"><input type="checkbox" checked> <span>交易服务收入增速连续两期高于履约相关成本增速</span></li>
+                  <li class="validation-item"><input type="checkbox" checked> <span>管理层继续披露商家生态或履约效率的可验证指标</span></li>
+                  <li class="validation-item"><input type="checkbox"> <span>海外业务出现可单独核验的收入或亏损披露</span></li>
+                </ul>
+                <button class="validation-add" type="button">＋ 添加验证条件</button>
+              </div>
+            </div>
+            <div class="my-view">
+              <div class="my-view-label">
+                <i data-lucide="user-round" class="icon" aria-hidden="true"></i>
+                我的判断
+              </div>
+              <select aria-label="我的判断状态">
+                <option>尚未判断</option>
+                <option selected>方向改善，但需要更多证据</option>
+                <option>与 AI 判断不同</option>
+                <option>暂不关注</option>
+              </select>
+              <button class="text-button compact-button note-button" type="button">查看备注（2）</button>
+            </div>
+            <button class="question-expand-toggle" type="button" aria-expanded="false">
+              展开支持、反对与未知证据
+              <i data-lucide="chevron-down" class="icon icon-sm" aria-hidden="true"></i>
+            </button>
+            <div class="question-expanded">
+              <div class="evidence-column support">
+                <h4><i data-lucide="thumbs-up" class="icon icon-sm"></i>支持证据 · 3</h4>
+                <ul class="evidence-list">
+                  <li><button type="button" data-open-evidence="overseas-growth">交易服务收入同比 +38.6%，快于相关成本增速</button></li>
+                  <li><button type="button" data-open-evidence="merchant-ecosystem">管理层披露活跃商家与履约密度持续上升</button></li>
+                  <li><button type="button" data-open-evidence="cash-position">现金储备仍可覆盖当前投入强度</button></li>
+                </ul>
+              </div>
+              <div class="evidence-column counter">
+                <h4><i data-lucide="thumbs-down" class="icon icon-sm"></i>反对证据 · 2</h4>
+                <ul class="evidence-list">
+                  <li><button type="button" data-open-evidence="margin-pressure">经营利润率连续第三个季度下降</button></li>
+                  <li><button type="button" data-open-evidence="regulatory-risk">欧洲监管范围扩大，潜在合规成本上升</button></li>
+                </ul>
+              </div>
+              <div class="evidence-column unknown">
+                <h4><i data-lucide="circle-help" class="icon icon-sm"></i>未知信息 · 3</h4>
+                <ul class="evidence-list">
+                  <li><button type="button" data-open-evidence="unknown-overseas">公司未单独披露海外收入与利润</button></li>
+                  <li><button type="button" data-open-evidence="unknown-cohort">缺少海外用户留存或复购数据</button></li>
+                  <li><button type="button" data-open-evidence="unknown-subsidy">补贴与自然交易增长无法拆分</button></li>
+                </ul>
+              </div>
+            </div>
+            <div class="note-editor">
+              <div class="field">
+                <label>我的研究备注（不会被 AI 覆盖）</label>
+                <textarea>我更关心收入增长是否来自补贴而非真实留存。下期优先看管理层是否披露复购、商家密度或履约效率；如果仍然只有定性表述，不提高判断置信度。</textarea>
+              </div>
+              <div class="note-editor-actions">
+                <button class="secondary-button compact-button cancel-note" type="button">取消</button>
+                <button class="primary-button compact-button save-note" type="button">保存到当前快照</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="research-question-card comparison-highlight" id="question-margin" data-question-title="高投入对利润率和现金流造成什么影响？">
+            <div class="question-card-head">
+              <div>
+                <div class="question-number">RQ 02 · 用户置顶 · 本期判断变化</div>
+                <h3 class="question-title">高投入对利润率和现金流造成什么影响？</h3>
+              </div>
+              <div class="question-head-actions">
+                <span class="status-tag deteriorating">恶化</span>
+                <button class="icon-button mark-read-button" type="button" data-tooltip="标记为已读" aria-label="标记为已读">
+                  <i data-lucide="circle-check-big" class="icon"></i>
+                </button>
+                <button class="icon-button pin-button" type="button" data-tooltip="取消置顶" aria-label="取消置顶" aria-pressed="true">
+                  <i data-lucide="pin" class="icon"></i>
+                </button>
+                <button class="icon-button note-button" type="button" data-tooltip="编辑我的判断" aria-label="编辑我的判断">
+                  <i data-lucide="notebook-pen" class="icon"></i>
+                </button>
+              </div>
+            </div>
+            <div class="question-core">
+              <div class="ai-judgment">
+                <div class="judgment-label">
+                  <span class="label-title">AI 当前判断</span>
+                  <span class="evidence-tag calculated"><i data-lucide="calculator" class="icon icon-sm"></i>公式推算</span>
+                </div>
+                <p class="judgment-text">投入仍可由经营现金流覆盖，但利润率与自由现金流转换率同步下降，说明增长的短期资金效率变差。</p>
+                <p class="judgment-change"><strong>本期变化：</strong>从“基本不变”调整为“恶化”。经营利润率下降 3.5pp，自由现金流转换率由 83% 降至 61%。</p>
+              </div>
+              <div class="next-check">
+                <div class="judgment-label">
+                  <span class="label-title">下期验证条件</span>
+                  <span style="color: var(--ink-faint); font-size: 9px">1 / 2 已确认</span>
+                </div>
+                <ul class="validation-list">
+                  <li class="validation-item"><input type="checkbox" checked> <span>经营利润率是否止跌或费用增速低于毛利润增速</span></li>
+                  <li class="validation-item"><input type="checkbox"> <span>自由现金流转换率是否恢复至 70% 以上</span></li>
+                </ul>
+                <button class="validation-add" type="button">＋ 添加验证条件</button>
+              </div>
+            </div>
+            <div class="my-view">
+              <div class="my-view-label"><i data-lucide="user-round" class="icon"></i>我的判断</div>
+              <select aria-label="我的判断状态">
+                <option>尚未判断</option>
+                <option selected>短期恶化，但现金储备仍充足</option>
+                <option>比 AI 更悲观</option>
+                <option>暂不关注</option>
+              </select>
+              <button class="text-button compact-button note-button" type="button">添加备注</button>
+            </div>
+            <button class="question-expand-toggle" type="button" aria-expanded="false">
+              展开支持、反对与未知证据
+              <i data-lucide="chevron-down" class="icon icon-sm"></i>
+            </button>
+            <div class="question-expanded">
+              <div class="evidence-column support">
+                <h4><i data-lucide="thumbs-up" class="icon icon-sm"></i>支持当前判断 · 2</h4>
+                <ul class="evidence-list">
+                  <li><button type="button" data-open-evidence="margin-pressure">经营利润率连续三期下降</button></li>
+                  <li><button type="button" data-open-evidence="fcf-formula">自由现金流转换率降至 61%</button></li>
+                </ul>
+              </div>
+              <div class="evidence-column counter">
+                <h4><i data-lucide="thumbs-down" class="icon icon-sm"></i>缓释证据 · 2</h4>
+                <ul class="evidence-list">
+                  <li><button type="button" data-open-evidence="cash-position">现金及短期投资仍同比增长</button></li>
+                  <li><button type="button" data-open-evidence="operating-cash">经营现金流仍为正且覆盖资本支出</button></li>
+                </ul>
+              </div>
+              <div class="evidence-column unknown">
+                <h4><i data-lucide="circle-help" class="icon icon-sm"></i>未知信息 · 1</h4>
+                <ul class="evidence-list">
+                  <li><button type="button" data-open-evidence="unknown-investment">公司未披露海外投入的预计峰值或回收期</button></li>
+                </ul>
+              </div>
+            </div>
+            <div class="note-editor">
+              <div class="field">
+                <label>我的研究备注（不会被 AI 覆盖）</label>
+                <textarea placeholder="记录你对利润率、现金流和投入效率的判断..."></textarea>
+              </div>
+              <div class="note-editor-actions">
+                <button class="secondary-button compact-button cancel-note" type="button">取消</button>
+                <button class="primary-button compact-button save-note" type="button">保存到当前快照</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="research-question-card" id="question-growth" data-question-title="收入增长的主要驱动力是否发生变化？">
+            <div class="question-card-head">
+              <div>
+                <div class="question-number">RQ 03 · 判断未变 · 已阅读</div>
+                <h3 class="question-title">收入增长的主要驱动力是否发生变化？</h3>
+              </div>
+              <div class="question-head-actions">
+                <span class="status-tag unchanged">基本不变</span>
+                <button class="icon-button pin-button" type="button" data-tooltip="置顶问题" aria-label="置顶问题" aria-pressed="false">
+                  <i data-lucide="pin" class="icon"></i>
+                </button>
+                <button class="icon-button note-button" type="button" data-tooltip="编辑我的判断" aria-label="编辑我的判断">
+                  <i data-lucide="notebook-pen" class="icon"></i>
+                </button>
+              </div>
+            </div>
+            <div class="question-core">
+              <div class="ai-judgment">
+                <div class="judgment-label"><span class="label-title">AI 当前判断</span><span class="evidence-tag official">官方披露</span></div>
+                <p class="judgment-text">交易服务收入仍贡献主要增量，在线营销服务保持增长但占总增量的比例继续下降。</p>
+                <p class="judgment-change" style="border-left-color: var(--neutral)"><strong>本期变化：</strong>判断未变。新增证据进一步支持交易服务收入成为增长主力。</p>
+              </div>
+              <div class="next-check">
+                <div class="judgment-label"><span class="label-title">下期验证条件</span></div>
+                <ul class="validation-list">
+                  <li class="validation-item"><input type="checkbox" checked> <span>交易服务收入占增量比例是否继续超过 60%</span></li>
+                  <li class="validation-item"><input type="checkbox"> <span>在线营销服务增速是否重新加快</span></li>
+                </ul>
+              </div>
+            </div>
+            <button class="question-expand-toggle" type="button" aria-expanded="false">
+              展开证据与未知信息
+              <i data-lucide="chevron-down" class="icon icon-sm"></i>
+            </button>
+            <div class="question-expanded">
+              <div class="evidence-column support"><h4>支持证据 · 2</h4><ul class="evidence-list"><li><button type="button" data-open-evidence="revenue-mix">收入分项同比与增量贡献</button></li></ul></div>
+              <div class="evidence-column counter"><h4>反对证据 · 0</h4><p style="color: var(--ink-faint); font-size: 10px">当前没有足以反驳主要驱动力判断的新证据。</p></div>
+              <div class="evidence-column unknown"><h4>未知信息 · 1</h4><ul class="evidence-list"><li><button type="button" data-open-evidence="unknown-region">收入分项无法进一步拆分地区来源</button></li></ul></div>
+            </div>
+            <div class="note-editor"><div class="field"><label>我的研究备注</label><textarea></textarea></div><div class="note-editor-actions"><button class="secondary-button compact-button cancel-note">取消</button><button class="primary-button compact-button save-note">保存</button></div></div>
+          </article>
+
+          <article class="research-question-card" id="question-guidance" data-question-title="管理层明确指引是否兑现？">
+            <div class="question-card-head">
+              <div>
+                <div class="question-number">RQ 04 · 1 项待验证</div>
+                <h3 class="question-title">管理层明确指引是否兑现？</h3>
+              </div>
+              <div class="question-head-actions">
+                <span class="status-tag insufficient">证据不足</span>
+                <button class="icon-button mark-read-button" type="button" data-tooltip="标记为已读"><i data-lucide="circle-check-big" class="icon"></i></button>
+                <button class="icon-button pin-button" type="button" data-tooltip="置顶问题" aria-pressed="false"><i data-lucide="pin" class="icon"></i></button>
+                <button class="icon-button note-button" type="button" data-tooltip="编辑我的判断"><i data-lucide="notebook-pen" class="icon"></i></button>
+              </div>
+            </div>
+            <div class="question-core">
+              <div class="ai-judgment">
+                <div class="judgment-label"><span class="label-title">AI 当前判断</span><span class="evidence-tag analysis">分析判断</span></div>
+                <p class="judgment-text">当前可验证指引中，1 项部分兑现，1 项暂不可验证。公司没有给出收入或利润的量化预测。</p>
+                <p class="judgment-change" style="border-left-color: var(--warning)"><strong>本期变化：</strong>“继续保持高质量投入”得到费用增速支持，但“提升效率”没有对应量化指标。</p>
+              </div>
+              <div class="next-check">
+                <div class="judgment-label"><span class="label-title">下期验证条件</span></div>
+                <ul class="validation-list">
+                  <li class="validation-item"><input type="checkbox"> <span>是否出现可量化的费用效率或履约效率指标</span></li>
+                </ul>
+              </div>
+            </div>
+            <button class="question-expand-toggle" type="button" aria-expanded="false">展开指引证据 <i data-lucide="chevron-down" class="icon icon-sm"></i></button>
+            <div class="question-expanded">
+              <div class="evidence-column support"><h4>兑现 · 1</h4><ul class="evidence-list"><li><button type="button" data-open-evidence="guidance-check">保持高投入：销售与营销费用同比 +42%</button></li></ul></div>
+              <div class="evidence-column counter"><h4>未兑现 · 0</h4><p style="font-size: 10px; color: var(--ink-faint)">没有明确判定为未兑现的量化承诺。</p></div>
+              <div class="evidence-column unknown"><h4>暂不可验证 · 1</h4><ul class="evidence-list"><li><button type="button" data-open-evidence="guidance-efficiency">“提升投入效率”缺少目标与时间范围</button></li></ul></div>
+            </div>
+            <div class="note-editor"><div class="field"><label>我的研究备注</label><textarea></textarea></div><div class="note-editor-actions"><button class="secondary-button compact-button cancel-note">取消</button><button class="primary-button compact-button save-note">保存</button></div></div>
+          </article>
+
+          <article class="research-question-card" id="question-risk" data-question-title="海外监管与合规风险是否加剧？">
+            <div class="question-card-head">
+              <div>
+                <div class="question-number">RQ 05 · 新增风险信号 · 已阅读</div>
+                <h3 class="question-title">海外监管与合规风险是否加剧？</h3>
+              </div>
+              <div class="question-head-actions">
+                <span class="status-tag deteriorating">恶化</span>
+                <button class="icon-button pin-button" type="button" data-tooltip="置顶问题" aria-pressed="false"><i data-lucide="pin" class="icon"></i></button>
+                <button class="icon-button note-button" type="button" data-tooltip="编辑我的判断"><i data-lucide="notebook-pen" class="icon"></i></button>
+              </div>
+            </div>
+            <div class="question-core">
+              <div class="ai-judgment">
+                <div class="judgment-label"><span class="label-title">AI 当前判断</span><span class="evidence-tag official">官方披露</span></div>
+                <p class="judgment-text">欧洲平台治理调查范围扩大，新增信息披露与商品治理要求；目前无法量化财务影响，但业务调整和合规投入的不确定性上升。</p>
+                <p class="judgment-change"><strong>本期变化：</strong>风险从“持续存在”调整为“加剧”，原因是调查范围和整改要求新增。</p>
+              </div>
+              <div class="next-check">
+                <div class="judgment-label"><span class="label-title">下期验证条件</span></div>
+                <ul class="validation-list">
+                  <li class="validation-item"><input type="checkbox" checked> <span>公司是否披露整改范围、时间表或潜在处罚</span></li>
+                  <li class="validation-item"><input type="checkbox"> <span>履约或平台治理成本是否出现异常上升</span></li>
+                </ul>
+              </div>
+            </div>
+            <button class="question-expand-toggle" type="button" aria-expanded="false">展开风险证据 <i data-lucide="chevron-down" class="icon icon-sm"></i></button>
+            <div class="question-expanded">
+              <div class="evidence-column support"><h4>风险加剧证据 · 2</h4><ul class="evidence-list"><li><button type="button" data-open-evidence="regulatory-risk">监管调查范围扩大</button></li><li><button type="button" data-open-evidence="risk-factor-update">20-F 新增平台商品治理风险表述</button></li></ul></div>
+              <div class="evidence-column counter"><h4>缓释证据 · 1</h4><ul class="evidence-list"><li><button type="button" data-open-evidence="compliance-response">公司已设立专项治理团队并提交初步整改计划</button></li></ul></div>
+              <div class="evidence-column unknown"><h4>未知信息 · 2</h4><ul class="evidence-list"><li><button type="button" data-open-evidence="unknown-penalty">潜在罚款与整改成本未披露</button></li></ul></div>
+            </div>
+            <div class="note-editor"><div class="field"><label>我的研究备注</label><textarea></textarea></div><div class="note-editor-actions"><button class="secondary-button compact-button cancel-note">取消</button><button class="primary-button compact-button save-note">保存</button></div></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="guidance-section">
+        <div class="section-heading">
+          <div>
+            <div class="section-index">04 / GUIDANCE & RISKS</div>
+            <h2 class="section-title">管理层指引、风险与重大事件</h2>
+            <p class="section-description">只保留可验证指引、发生变化的风险，以及会改变经营理解的官方事件。</p>
+          </div>
+        </div>
+
+        <div class="data-panel">
+          <div class="data-tabs" role="tablist">
+            <button class="tab-button active" type="button" data-tab-group="tracking" data-tab="guidance-panel" role="tab">管理层指引 2</button>
+            <button class="tab-button" type="button" data-tab-group="tracking" data-tab="risk-panel" role="tab">风险变化 3</button>
+            <button class="tab-button" type="button" data-tab-group="tracking" data-tab="events-panel" role="tab">重大事件 4</button>
+          </div>
+
+          <div class="tab-panel active" id="guidance-panel" data-panel-group="tracking">
+            <table class="tracking-table">
+              <thead><tr><th>原始表述 / 事项</th><th>时间范围</th><th>本期结果</th><th>状态</th><th>证据</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><div class="table-title">“未来几个季度继续保持高质量投入”</div><div class="table-subtitle">Q4 2025 Earnings Release · Management Commentary</div></td>
+                  <td>未来几个季度</td>
+                  <td>销售与营销费用同比 +42%；履约相关成本 +29%</td>
+                  <td><span class="status-tag improving">部分兑现</span></td>
+                  <td><button class="inline-link" type="button" data-open-evidence="guidance-check">2 条证据</button></td>
+                </tr>
+                <tr>
+                  <td><div class="table-title">“持续提升投入效率”</div><div class="table-subtitle">缺少明确指标、目标和时间范围</div></td>
+                  <td>未明确</td>
+                  <td>经营利润率下降，无法证明效率提升</td>
+                  <td><span class="status-tag insufficient">暂不可验证</span></td>
+                  <td><button class="inline-link" type="button" data-open-evidence="guidance-efficiency">查看边界</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="tab-panel" id="risk-panel" data-panel-group="tracking">
+            <table class="tracking-table">
+              <thead><tr><th>风险</th><th>相比上一期</th><th>影响问题</th><th>当前判断</th><th>证据</th></tr></thead>
+              <tbody>
+                <tr><td><div class="table-title">欧洲平台治理与商品合规</div></td><td><span class="diff-tag" style="color: var(--signal)">新增并加剧</span></td><td>海外监管风险</td><td>调查范围扩大，但财务影响未量化</td><td><button class="inline-link" data-open-evidence="regulatory-risk">3 条</button></td></tr>
+                <tr><td><div class="table-title">海外业务投入回收期不确定</div></td><td><span class="diff-tag" style="color: var(--neutral)">基本不变</span></td><td>海外增长 / 利润率</td><td>仍缺少分部收入与利润数据</td><td><button class="inline-link" data-open-evidence="unknown-investment">2 条</button></td></tr>
+                <tr><td><div class="table-title">现金流转换率下降</div></td><td><span class="diff-tag" style="color: var(--signal)">加剧</span></td><td>利润率与现金流</td><td>由 83% 降至 61%</td><td><button class="inline-link" data-open-evidence="fcf-formula">公式</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="tab-panel" id="events-panel" data-panel-group="tracking" style="padding: 20px">
+            <ol class="timeline">
+              <li class="timeline-item">
+                <time class="timeline-date">2026-05-28</time>
+                <div><h4 class="timeline-title">发布第一季度业绩与 6-K</h4><p class="timeline-copy">触发 12 项指标更新、2 项判断变化和 1 项指引评价。</p></div>
+                <button class="inline-link" data-open-evidence="change-overall">查看影响</button>
+              </li>
+              <li class="timeline-item">
+                <time class="timeline-date">2026-04-17</time>
+                <div><h4 class="timeline-title">欧洲监管机构扩大平台治理调查</h4><p class="timeline-copy">新增商品治理、广告透明度和推荐系统披露要求。</p></div>
+                <button class="inline-link" data-open-evidence="regulatory-risk">官方公告</button>
+              </li>
+              <li class="timeline-item">
+                <time class="timeline-date">2026-03-21</time>
+                <div><h4 class="timeline-title">提交 2025 年 20-F</h4><p class="timeline-copy">更新风险因素、股份数量与年度现金流数据。</p></div>
+                <button class="inline-link" data-open-evidence="annual-report">查看文件</button>
+              </li>
+              <li class="timeline-item">
+                <time class="timeline-date">2026-02-12</time>
+                <div><h4 class="timeline-title">董事会批准新一轮股份回购额度</h4><p class="timeline-copy">当前尚未观察到显著执行量，对股份数量影响有限。</p></div>
+                <button class="inline-link" data-open-evidence="buyback">查看证据</button>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="metrics-section">
+        <div class="section-heading">
+          <div>
+            <div class="section-index">05 / OPERATING METRICS</div>
+            <h2 class="section-title">核心经营指标</h2>
+            <p class="section-description">最近 8 个季度与 3 个完整年度。公司特有指标只有在官方持续披露且口径可追踪时才进入这里。</p>
+          </div>
+          <button class="secondary-button compact-button" type="button" data-open-evidence="metric-methodology">
+            <i data-lucide="book-open-check" class="icon icon-sm"></i>
+            查看指标口径
+          </button>
+        </div>
+
+        <div class="metrics-panel">
+          <div class="metric-list" role="tablist" aria-label="指标列表">
+            <button class="metric-item active" type="button" data-metric="revenue">
+              <span><span class="metric-name">营业收入</span><span class="metric-source">官方披露 · CNY</span></span>
+              <span class="metric-value">¥98.4B<em>+22.1%</em></span>
+            </button>
+            <button class="metric-item" type="button" data-metric="service">
+              <span><span class="metric-name">交易服务收入</span><span class="metric-source">官方披露 · CNY</span></span>
+              <span class="metric-value">¥52.7B<em>+38.6%</em></span>
+            </button>
+            <button class="metric-item" type="button" data-metric="margin">
+              <span><span class="metric-name">经营利润率</span><span class="metric-source">公式推算</span></span>
+              <span class="metric-value">18.2%<em style="color: var(--signal)">-3.5pp</em></span>
+            </button>
+            <button class="metric-item" type="button" data-metric="cashflow">
+              <span><span class="metric-name">经营现金流</span><span class="metric-source">官方披露 · CNY</span></span>
+              <span class="metric-value">¥24.8B<em>+5.3%</em></span>
+            </button>
+            <button class="metric-item" type="button" data-metric="fcf">
+              <span><span class="metric-name">自由现金流</span><span class="metric-source">公式推算 · CNY</span></span>
+              <span class="metric-value">¥19.1B<em style="color: var(--signal)">-9.8%</em></span>
+            </button>
+            <button class="metric-item" type="button" data-metric="marketing">
+              <span><span class="metric-name">营销费用率</span><span class="metric-source">公式推算</span></span>
+              <span class="metric-value">31.6%<em style="color: var(--signal)">+4.1pp</em></span>
+            </button>
+            <button class="metric-item" type="button" data-metric="cash">
+              <span><span class="metric-name">现金与短期投资</span><span class="metric-source">官方披露 · CNY</span></span>
+              <span class="metric-value">¥342B<em>+14.7%</em></span>
+            </button>
+          </div>
+
+          <div class="metric-canvas">
+            <div class="metric-head">
+              <div>
+                <div class="eyebrow" id="metric-eyebrow">REVENUE · QUARTERLY</div>
+                <div class="metric-big-number" id="metric-big-number">¥98.4B <small>2026 Q1</small></div>
+              </div>
+              <button class="evidence-tag official" id="metric-evidence-button" type="button" style="cursor: pointer" data-open-evidence="revenue-mix">
+                <i data-lucide="landmark" class="icon icon-sm"></i>
+                官方披露
+              </button>
+            </div>
+            <div class="metric-chart-wrap">
+              <span class="chart-axis-label">CNY B</span>
+              <div class="bar-chart" id="metric-chart">
+                <div class="bar-column"><span class="bar-value">54</span><span class="bar" style="height: 48%"><span class="bar-label">24 Q2</span></span></div>
+                <div class="bar-column"><span class="bar-value">61</span><span class="bar" style="height: 54%"><span class="bar-label">24 Q3</span></span></div>
+                <div class="bar-column"><span class="bar-value">68</span><span class="bar" style="height: 60%"><span class="bar-label">24 Q4</span></span></div>
+                <div class="bar-column"><span class="bar-value">72</span><span class="bar" style="height: 64%"><span class="bar-label">25 Q1</span></span></div>
+                <div class="bar-column"><span class="bar-value">79</span><span class="bar" style="height: 70%"><span class="bar-label">25 Q2</span></span></div>
+                <div class="bar-column"><span class="bar-value">85</span><span class="bar" style="height: 76%"><span class="bar-label">25 Q3</span></span></div>
+                <div class="bar-column"><span class="bar-value">92</span><span class="bar" style="height: 83%"><span class="bar-label">25 Q4</span></span></div>
+                <div class="bar-column"><span class="bar-value">98</span><span class="bar latest" style="height: 89%"><span class="bar-label">26 Q1</span></span></div>
+              </div>
+            </div>
+            <div class="metric-annotation">
+              <strong>公司如何解释</strong>
+              <p id="metric-commentary">公司称收入增长主要来自交易服务收入提升，在线营销服务保持稳定增长。官方未披露国内与海外收入拆分。</p>
+            </div>
+            <div class="metric-annotation">
+              <strong>分析边界</strong>
+              <p id="metric-boundary">可以确认收入结构变化，不能仅凭交易服务收入推断海外收入规模。地区贡献仍标记为“信息未披露”。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="financials-section">
+        <div class="section-heading">
+          <div>
+            <div class="section-index">06 / SOURCE FINANCIALS</div>
+            <h2 class="section-title">原始财务数据</h2>
+            <p class="section-description">完整报表用于核验，不占据核心研究视线。点击行可打开对应证据与口径说明。</p>
+          </div>
+        </div>
+
+        <div class="financial-disclosure">
+          <button class="disclosure-head" type="button">
+            <span>
+              <span class="disclosure-title">利润表 · 最近 8 个季度</span>
+              <span class="disclosure-copy">单位：人民币百万元 · 未经审计季度数据 · 演示数据</span>
+            </span>
+            <i data-lucide="chevron-down" class="icon"></i>
+          </button>
+          <div class="disclosure-content">
+            <table class="financial-table">
+              <thead><tr><th>项目</th><th>24 Q2</th><th>24 Q3</th><th>24 Q4</th><th>25 Q1</th><th>25 Q2</th><th>25 Q3</th><th>25 Q4</th><th>26 Q1</th></tr></thead>
+              <tbody>
+                <tr data-open-evidence="revenue-mix"><td>营业收入</td><td>54,320</td><td>61,180</td><td>68,450</td><td>72,540</td><td>79,160</td><td>85,470</td><td>92,130</td><td>98,440</td></tr>
+                <tr data-open-evidence="gross-profit"><td>毛利润</td><td>33,120</td><td>37,450</td><td>41,660</td><td>43,530</td><td>46,810</td><td>50,250</td><td>53,440</td><td>56,100</td></tr>
+                <tr data-open-evidence="margin-pressure"><td>经营利润</td><td>14,510</td><td>16,810</td><td>17,530</td><td>16,870</td><td>17,920</td><td>18,750</td><td>19,990</td><td>17,920</td></tr>
+                <tr data-open-evidence="net-income"><td>净利润</td><td>12,930</td><td>15,420</td><td>16,180</td><td>15,530</td><td>16,670</td><td>17,820</td><td>18,920</td><td>16,440</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="financial-disclosure" style="margin-top: 9px">
+          <button class="disclosure-head" type="button">
+            <span><span class="disclosure-title">现金流量表 · 最近 8 个季度</span><span class="disclosure-copy">包含经营现金流、资本支出与自由现金流推算</span></span>
+            <i data-lucide="chevron-down" class="icon"></i>
+          </button>
+          <div class="disclosure-content">
+            <table class="financial-table">
+              <thead><tr><th>项目</th><th>24 Q2</th><th>24 Q3</th><th>24 Q4</th><th>25 Q1</th><th>25 Q2</th><th>25 Q3</th><th>25 Q4</th><th>26 Q1</th></tr></thead>
+              <tbody>
+                <tr data-open-evidence="operating-cash"><td>经营现金流</td><td>17,300</td><td>20,400</td><td>22,600</td><td>23,550</td><td>25,300</td><td>27,100</td><td>28,200</td><td>24,800</td></tr>
+                <tr data-open-evidence="capex"><td>资本支出</td><td>(3,100)</td><td>(3,400)</td><td>(3,900)</td><td>(4,100)</td><td>(4,600)</td><td>(4,800)</td><td>(5,100)</td><td>(5,700)</td></tr>
+                <tr data-open-evidence="fcf-formula"><td>自由现金流（推算）</td><td>14,200</td><td>17,000</td><td>18,700</td><td>19,450</td><td>20,700</td><td>22,300</td><td>23,100</td><td>19,100</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside class="evidence-drawer" id="evidence-drawer" aria-label="证据抽屉" aria-hidden="true">
+    <div class="drawer-head">
+      <div>
+        <div class="eyebrow">Evidence chain</div>
+        <h2 class="drawer-title" id="drawer-title">海外增长判断的完整证据链</h2>
+      </div>
+      <button class="icon-button" id="close-drawer" type="button" data-tooltip="关闭证据抽屉" aria-label="关闭证据抽屉">
+        <i data-lucide="x" class="icon"></i>
+      </button>
+    </div>
+    <div class="drawer-tabs" role="tablist">
+      <button class="tab-button active" type="button" data-tab-group="drawer" data-tab="chain-panel">证据链</button>
+      <button class="tab-button" type="button" data-tab-group="drawer" data-tab="source-panel">原文定位</button>
+      <button class="tab-button" type="button" data-tab-group="drawer" data-tab="formula-panel">公式推算</button>
+    </div>
+    <div class="drawer-body">
+      <div class="drawer-panel active" id="chain-panel" data-panel-group="drawer">
+        <div class="chain-group">
+          <div class="chain-group-title"><span style="color: var(--positive)">支持证据</span><span class="chain-count">3 ITEMS</span></div>
+          <button class="chain-item" type="button" data-source-key="service-revenue">
+            <span class="chain-index">01</span>
+            <span><span class="chain-item-title">交易服务收入同比增长 38.6%</span><span class="chain-item-meta">Q1 2026 Results · 官方披露 · p.4</span></span>
+            <i data-lucide="chevron-right" class="icon icon-sm"></i>
+          </button>
+          <button class="chain-item" type="button" data-source-key="cost-growth">
+            <span class="chain-index">02</span>
+            <span><span class="chain-item-title">履约相关成本同比增长 29.4%</span><span class="chain-item-meta">Q1 2026 Results · 官方披露 · p.7</span></span>
+            <i data-lucide="chevron-right" class="icon icon-sm"></i>
+          </button>
+          <button class="chain-item" type="button" data-source-key="management-comment">
+            <span class="chain-index">03</span>
+            <span><span class="chain-item-title">管理层称商家生态和履约效率改善</span><span class="chain-item-meta">Management Commentary · 官方表述</span></span>
+            <i data-lucide="chevron-right" class="icon icon-sm"></i>
+          </button>
+        </div>
+        <div class="chain-group">
+          <div class="chain-group-title"><span style="color: var(--signal)">反对证据</span><span class="chain-count">2 ITEMS</span></div>
+          <button class="chain-item" type="button" data-source-key="operating-margin">
+            <span class="chain-index">04</span>
+            <span><span class="chain-item-title">经营利润率连续第三期下降</span><span class="chain-item-meta">公式推算 · 18.2% · -3.5pp</span></span>
+            <i data-lucide="chevron-right" class="icon icon-sm"></i>
+          </button>
+          <button class="chain-item" type="button" data-source-key="eu-risk">
+            <span class="chain-index">05</span>
+            <span><span class="chain-item-title">欧洲平台治理调查范围扩大</span><span class="chain-item-meta">监管公告 · 2026-04-17</span></span>
+            <i data-lucide="chevron-right" class="icon icon-sm"></i>
+          </button>
+        </div>
+        <div class="chain-group">
+          <div class="chain-group-title"><span style="color: var(--warning)">未知信息</span><span class="chain-count">3 ITEMS</span></div>
+          <div class="unknown-card">公司未单独披露海外收入、利润、用户留存与补贴拆分，因此不能把当前证据解释为海外业务已盈利。</div>
+        </div>
+      </div>
+
+      <div class="drawer-panel" id="source-panel" data-panel-group="drawer">
+        <article class="source-document">
+          <div class="eyebrow">Selected source</div>
+          <h3 class="source-document-title" id="source-title">PDD Holdings Announces First Quarter 2026 Unaudited Financial Results</h3>
+          <dl class="source-meta-grid">
+            <div class="source-meta"><dt>文件类型</dt><dd id="source-type">SEC 6-K 附件</dd></div>
+            <div class="source-meta"><dt>发布日期</dt><dd id="source-date">2026-05-28</dd></div>
+            <div class="source-meta"><dt>报告期</dt><dd id="source-period">2026 Q1</dd></div>
+            <div class="source-meta"><dt>定位</dt><dd id="source-location">Page 4 · Revenue</dd></div>
+          </dl>
+        </article>
+        <div class="eyebrow">Original text</div>
+        <blockquote class="quote-block" id="source-original">
+          Revenues from transaction services were RMB52,704.3 million, an increase of 38.6% from the same quarter of 2025.
+        </blockquote>
+        <div class="eyebrow">中文翻译</div>
+        <div class="translation-block" id="source-translation">交易服务收入为人民币 527.043 亿元，较 2025 年同期增长 38.6%。翻译仅用于阅读，核验以英文原文为准。</div>
+        <button class="secondary-button" type="button" style="width: 100%" id="source-link-button">
+          <i data-lucide="external-link" class="icon icon-sm"></i>
+          打开官方原文（演示）
+        </button>
+      </div>
+
+      <div class="drawer-panel" id="formula-panel" data-panel-group="drawer">
+        <div class="formula-box">
+          <div class="eyebrow" style="color: #aeb8b4">Formula · version 1.2</div>
+          <div class="formula-expression">自由现金流转换率<br>= 自由现金流 ÷ 净利润 × 100%</div>
+          <div class="formula-result">61.0%</div>
+          <div class="formula-inputs">
+            <div class="formula-input"><span>自由现金流（推算）</span><strong>¥19.1B</strong></div>
+            <div class="formula-input"><span>净利润（官方披露）</span><strong>¥31.3B</strong></div>
+            <div class="formula-input"><span>上一期结果</span><strong>83.0%</strong></div>
+            <div class="formula-input"><span>变化</span><strong style="color: #ffb9a9">-22.0pp</strong></div>
+          </div>
+        </div>
+        <div class="translation-block" style="margin-top: 14px">
+          <strong>计算边界：</strong>自由现金流定义为经营现金流减资本支出。该口径用于跨期跟踪，不代表公司官方非 GAAP 指标。
+        </div>
+        <button class="secondary-button" type="button" style="width: 100%" data-open-evidence="fcf-formula">
+          <i data-lucide="rotate-ccw" class="icon icon-sm"></i>
+          重放计算输入
+        </button>
+      </div>
+    </div>
+    <div class="drawer-foot">
+      <button class="secondary-button" type="button" id="copy-citation"><i data-lucide="copy" class="icon icon-sm"></i>复制引用</button>
+      <button class="primary-button" type="button" id="ask-about-evidence"><i data-lucide="message-square" class="icon icon-sm"></i>追问这条证据</button>
+    </div>
+  </aside>
+
+  <div class="ai-assistant" id="ai-assistant">
+    <div class="ai-panel" role="dialog" aria-label="公司研究问答">
+      <div class="ai-panel-head">
+        <div class="ai-panel-title"><i data-lucide="sparkles" class="icon"></i>研究追问</div>
+        <button class="icon-button" id="close-ai" type="button" aria-label="关闭研究追问" style="color: #fff; border-color: rgba(255,255,255,.4)">
+          <i data-lucide="x" class="icon"></i>
+        </button>
+      </div>
+      <div class="ai-context">仅使用 PDD 已归档官方材料 · 当前快照 2026 Q1 · 回答必须引用证据</div>
+      <div class="ai-messages" id="ai-messages">
+        <div class="eyebrow" style="margin-bottom: 8px">Suggested questions</div>
+        <div class="suggestion-grid">
+          <button class="suggestion-button" type="button">为什么海外增长判断从证据不足变为改善？</button>
+          <button class="suggestion-button" type="button">经营利润率下降主要由哪些官方数据解释？</button>
+          <button class="suggestion-button" type="button">有哪些关键数据公司没有披露？</button>
+        </div>
+        <div class="chat-bubble assistant">
+          我会区分官方事实、公式推算与分析判断。超出当前证据范围的问题会明确回答“无法从官方材料确认”。
+        </div>
+      </div>
+      <form class="ai-composer" id="ai-form">
+        <input id="ai-input" type="text" placeholder="追问当前公司、指标或证据..." autocomplete="off">
+        <button type="submit" aria-label="发送问题"><i data-lucide="arrow-up" class="icon"></i></button>
+      </form>
+    </div>
+    <button class="ai-launcher" id="ai-launcher" type="button" aria-label="打开研究追问">
+      <i data-lucide="message-square-text" class="icon-lg"></i>
+    </button>
+  </div>
+
+  <div class="modal-backdrop" id="add-question-modal" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="add-question-title">
+      <div class="modal-head">
+        <div><div class="eyebrow">New research question</div><h2 class="modal-title" id="add-question-title">加入一个长期研究问题</h2></div>
+        <button class="icon-button modal-close" type="button" aria-label="关闭"><i data-lucide="x" class="icon"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label for="new-question">你希望持续验证什么？</label>
+          <input id="new-question" type="text" placeholder="例如：股份回购是否真正抵消股权激励稀释？">
+        </div>
+        <div class="field">
+          <label for="new-question-reason">为什么值得长期跟踪？</label>
+          <textarea id="new-question-reason" placeholder="说明它会影响哪个经营判断，AI 会据此建议证据与验证条件。"></textarea>
+        </div>
+        <div class="translation-block">
+          新问题不会立即产生正式结论。系统会基于当前官方证据重新分析，并把结果标记为“待确认”。
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary-button modal-close" type="button">取消</button>
+        <button class="primary-button" id="create-question" type="button">创建并重新分析</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="sync-modal" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sync-title">
+      <div class="modal-head">
+        <div><div class="eyebrow">Research workflow</div><h2 class="modal-title" id="sync-title">同步与分析官方材料</h2></div>
+        <button class="icon-button modal-close" type="button" aria-label="关闭"><i data-lucide="x" class="icon"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="run-summary">
+          <div><strong>12</strong><span>预期材料</span></div>
+          <div><strong>11</strong><span>已获取</span></div>
+          <div><strong style="color: var(--warning)">1</strong><span>补充材料缺失</span></div>
+        </div>
+        <div class="sync-progress"><span id="sync-progress-bar"></span></div>
+        <div class="run-steps" id="run-steps">
+          <div class="run-step"><span class="run-step-index">01</span><span><strong>发现官方材料</strong><br><small>SEC、公司 IR 与已配置监管来源</small></span><span class="run-step-status">WAITING</span></div>
+          <div class="run-step"><span class="run-step-index">02</span><span><strong>下载并不可变归档</strong><br><small>校验 URL、哈希和文件版本</small></span><span class="run-step-status">WAITING</span></div>
+          <div class="run-step"><span class="run-step-index">03</span><span><strong>解析文本、表格与定位</strong><br><small>保留页码、章节和原文跨度</small></span><span class="run-step-status">WAITING</span></div>
+          <div class="run-step"><span class="run-step-index">04</span><span><strong>提取指标、指引与风险</strong><br><small>结构化输出并绑定证据</small></span><span class="run-step-status">WAITING</span></div>
+          <div class="run-step"><span class="run-step-index">05</span><span><strong>跨期比较与研究判断</strong><br><small>更新五个研究问题和重大变化</small></span><span class="run-step-status">WAITING</span></div>
+          <div class="run-step"><span class="run-step-index">06</span><span><strong>质量校验与快照发布</strong><br><small>来源、数字、引用与合规门槛</small></span><span class="run-step-status">WAITING</span></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary-button modal-close" type="button">稍后再做</button>
+        <button class="primary-button" id="start-sync" type="button"><i data-lucide="play" class="icon icon-sm"></i>开始同步</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="command-modal" role="presentation">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="command-title" style="border-top-color: var(--ink)">
+      <div class="modal-head">
+        <div style="width: 100%">
+          <label class="sr-only" for="command-input">搜索</label>
+          <input id="command-input" type="text" placeholder="搜索问题、指标、结论或证据..." style="height: 45px; font-size: 14px">
+        </div>
+        <button class="icon-button modal-close" type="button" aria-label="关闭"><i data-lucide="x" class="icon"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="eyebrow">快捷导航</div>
+        <div class="command-results">
+          <button class="command-result" type="button" data-command-target="major-changes"><i data-lucide="git-compare-arrows" class="icon"></i>本期重大变化 <kbd>G C</kbd></button>
+          <button class="command-result" type="button" data-command-target="question-overseas"><i data-lucide="circle-help" class="icon"></i>海外业务投入是否带来可持续增长？ <kbd>RQ 01</kbd></button>
+          <button class="command-result" type="button" data-command-target="metrics-section"><i data-lucide="chart-no-axes-column" class="icon"></i>核心经营指标 <kbd>G M</kbd></button>
+          <button class="command-result" type="button" data-command-target="guidance-section"><i data-lucide="scroll-text" class="icon"></i>管理层指引与风险 <kbd>G G</kbd></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+  <script>
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+    const periodSnapshots = {
+      "2026Q1": {
+        id: "SNAPSHOT PDD-2026-Q1-04",
+        cutoff: "2026-05-28 18:40 CST",
+        title: "最新变化先于结论，证据先于叙事。"
+      },
+      "2025Q4": {
+        id: "SNAPSHOT PDD-2025-FY-03",
+        cutoff: "2026-03-21 12:10 CST",
+        title: "年度增长仍强，但投入效率尚未被证明。"
+      },
+      "2025Q3": {
+        id: "SNAPSHOT PDD-2025-Q3-02",
+        cutoff: "2025-11-26 20:05 CST",
+        title: "收入结构变化加快，利润率开始承压。"
+      },
+      "2025Q2": {
+        id: "SNAPSHOT PDD-2025-Q2-01",
+        cutoff: "2025-08-25 17:32 CST",
+        title: "海外投入扩大，核心未知信息仍未披露。"
+      }
+    };
+
+    const evidenceMap = {
+      "overseas-growth": { title: "海外增长判断的完整证据链", source: "service-revenue", formula: false },
+      "margin-pressure": { title: "利润率承压判断的证据链", source: "operating-margin", formula: true },
+      "guidance-check": { title: "管理层投入指引的验证记录", source: "management-comment", formula: false },
+      "regulatory-risk": { title: "欧洲监管风险变化证据", source: "eu-risk", formula: false },
+      "fcf-formula": { title: "自由现金流转换率推算", source: "operating-margin", formula: true },
+      "coverage": { title: "官方来源覆盖与缺失影响", source: "coverage", formula: false },
+      "change-overall": { title: "本期重大变化的来源清单", source: "service-revenue", formula: false },
+      "merchant-ecosystem": { title: "商家生态改善的官方表述", source: "management-comment", formula: false },
+      "cash-position": { title: "现金储备与投入覆盖能力", source: "cash-position", formula: false },
+      "operating-cash": { title: "经营现金流证据", source: "operating-cash", formula: false },
+      "revenue-mix": { title: "收入结构与增量贡献", source: "service-revenue", formula: false },
+      "annual-report": { title: "2025 年 20-F 年报", source: "annual-report", formula: false },
+      "buyback": { title: "股份回购授权与执行", source: "buyback", formula: false },
+      "metric-methodology": { title: "指标口径与可比性规则", source: "metric-methodology", formula: true },
+      "guidance-efficiency": { title: "“提升投入效率”的验证边界", source: "management-comment", formula: false },
+      "risk-factor-update": { title: "年度风险因素新增表述", source: "annual-report", formula: false },
+      "compliance-response": { title: "公司合规整改回应", source: "eu-risk", formula: false },
+      "gross-profit": { title: "毛利润官方数据", source: "service-revenue", formula: false },
+      "net-income": { title: "净利润官方数据", source: "service-revenue", formula: false },
+      "capex": { title: "资本支出与自由现金流输入", source: "operating-cash", formula: true },
+      "unknown-overseas": { title: "信息未披露：海外收入与利润", source: "unknown", formula: false },
+      "unknown-cohort": { title: "信息未披露：用户留存", source: "unknown", formula: false },
+      "unknown-subsidy": { title: "信息未披露：补贴拆分", source: "unknown", formula: false },
+      "unknown-investment": { title: "信息未披露：投入回收期", source: "unknown", formula: false },
+      "unknown-region": { title: "信息未披露：地区收入拆分", source: "unknown", formula: false },
+      "unknown-penalty": { title: "信息未披露：潜在处罚", source: "unknown", formula: false }
+    };
+
+    const sourceMap = {
+      "service-revenue": {
+        title: "PDD Holdings Announces First Quarter 2026 Unaudited Financial Results",
+        type: "SEC 6-K 附件",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Page 4 · Revenue",
+        original: "Revenues from transaction services were RMB52,704.3 million, an increase of 38.6% from the same quarter of 2025.",
+        translation: "交易服务收入为人民币 527.043 亿元，较 2025 年同期增长 38.6%。翻译仅用于阅读，核验以英文原文为准。"
+      },
+      "cost-growth": {
+        title: "PDD Holdings Announces First Quarter 2026 Unaudited Financial Results",
+        type: "SEC 6-K 附件",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Page 7 · Costs",
+        original: "Costs related to fulfillment and payment processing increased by 29.4% compared with the same quarter of 2025.",
+        translation: "履约及支付处理相关成本较 2025 年同期增长 29.4%。该分类为原型中的演示口径。"
+      },
+      "management-comment": {
+        title: "First Quarter 2026 Management Commentary",
+        type: "公司财报新闻稿",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Management Commentary · Paragraph 3",
+        original: "We continued to invest in merchant ecosystem development and fulfillment capabilities, while observing early improvements in operating efficiency.",
+        translation: "我们继续投入商家生态建设与履约能力，同时观察到运营效率的早期改善。该表述没有给出效率指标或目标值。"
+      },
+      "operating-margin": {
+        title: "Q1 2026 Condensed Consolidated Statements of Operations",
+        type: "SEC 6-K 附件",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Page 12 · Operations",
+        original: "Operating profit was RMB17,920 million on total revenues of RMB98,440 million.",
+        translation: "经营利润为人民币 179.2 亿元，营业收入为人民币 984.4 亿元。经营利润率 18.2% 为系统公式推算。"
+      },
+      "eu-risk": {
+        title: "European Commission expands formal proceedings concerning marketplace governance",
+        type: "监管机构公告",
+        date: "2026-04-17",
+        period: "财报间事件",
+        location: "Section 2 · Scope of Proceedings",
+        original: "The expanded proceedings concern product traceability, recommender-system transparency, and measures addressing potentially illegal goods.",
+        translation: "扩大后的调查涉及商品可追溯性、推荐系统透明度，以及针对潜在非法商品的治理措施。当前公告未量化处罚或整改成本。"
+      },
+      "cash-position": {
+        title: "Q1 2026 Condensed Consolidated Balance Sheets",
+        type: "SEC 6-K 附件",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Page 11 · Balance Sheet",
+        original: "Cash, cash equivalents and short-term investments were RMB342.0 billion as of March 31, 2026.",
+        translation: "截至 2026 年 3 月 31 日，现金、现金等价物及短期投资为人民币 3420 亿元。"
+      },
+      "operating-cash": {
+        title: "Q1 2026 Condensed Consolidated Statements of Cash Flows",
+        type: "SEC 6-K 附件",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Page 14 · Cash Flow",
+        original: "Net cash generated from operating activities was RMB24,800 million during the quarter.",
+        translation: "本季度经营活动产生的现金净额为人民币 248 亿元。"
+      },
+      "coverage": {
+        title: "Source Coverage Manifest · PDD 2026 Q1",
+        type: "系统来源清单",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Coverage Check · Run 04",
+        original: "11 of 12 expected official materials were retrieved. The official earnings-call transcript was not available.",
+        translation: "预期 12 份官方材料中已获取 11 份。官方业绩会逐字稿不可用，因此对管理层口头解释的分析范围受限。"
+      },
+      "annual-report": {
+        title: "PDD Holdings Inc. Annual Report on Form 20-F",
+        type: "SEC 20-F",
+        date: "2026-03-21",
+        period: "FY2025",
+        location: "Item 3.D · Risk Factors",
+        original: "We face evolving regulatory requirements in multiple jurisdictions relating to marketplace governance and consumer protection.",
+        translation: "我们在多个司法辖区面临与平台治理及消费者保护相关、持续变化的监管要求。"
+      },
+      "buyback": {
+        title: "Board Authorization for Share Repurchase Program",
+        type: "公司官方公告",
+        date: "2026-02-12",
+        period: "财报间事件",
+        location: "Paragraph 2",
+        original: "The board authorized a new share repurchase program, subject to market conditions and other factors.",
+        translation: "董事会批准新的股份回购计划，具体执行取决于市场状况及其他因素。授权不等于已执行。"
+      },
+      "metric-methodology": {
+        title: "Metric Definition Registry · Version 1.2",
+        type: "系统口径文档",
+        date: "2026-05-28",
+        period: "All periods",
+        location: "Metric REVENUE / FCF / MARGIN",
+        original: "Derived metrics are calculated deterministically from cited official inputs. Non-comparable periods are not joined into a continuous trend.",
+        translation: "推算指标只使用带引用的官方输入，由确定性公式计算。口径不可比期间不会被强行连接成连续趋势。"
+      },
+      "unknown": {
+        title: "Disclosure Gap Record",
+        type: "信息未披露",
+        date: "2026-05-28",
+        period: "2026 Q1",
+        location: "Analysis Boundary",
+        original: "No separately reported revenue, profit, retention, or subsidy data was found for the overseas business in the reviewed official materials.",
+        translation: "在本次审阅的官方材料中，没有找到海外业务单独披露的收入、利润、留存或补贴数据。系统不会用非唯一关系倒推这些数值。"
+      }
+    };
+
+    const metricData = {
+      revenue: {
+        eyebrow: "REVENUE · QUARTERLY",
+        value: "¥98.4B",
+        values: [54, 61, 68, 72, 79, 85, 92, 98],
+        commentary: "公司称收入增长主要来自交易服务收入提升，在线营销服务保持稳定增长。官方未披露国内与海外收入拆分。",
+        boundary: "可以确认收入结构变化，不能仅凭交易服务收入推断海外收入规模。地区贡献仍标记为“信息未披露”。",
+        type: "官方披露",
+        evidence: "revenue-mix"
+      },
+      service: {
+        eyebrow: "TRANSACTION SERVICES · QUARTERLY",
+        value: "¥52.7B",
+        values: [21, 25, 29, 31, 36, 41, 47, 53],
+        commentary: "交易服务收入增速持续高于在线营销服务，是最近四个季度最主要的收入增量来源。",
+        boundary: "该分项包含多类服务，不等同于海外业务收入。不能直接用于计算海外收入或 GMV。",
+        type: "官方披露",
+        evidence: "overseas-growth"
+      },
+      margin: {
+        eyebrow: "OPERATING MARGIN · QUARTERLY",
+        value: "18.2%",
+        values: [26, 27, 26, 23, 23, 22, 22, 18],
+        commentary: "销售与营销、履约及平台治理投入增速高于毛利润增速，经营利润率连续三个季度下降。",
+        boundary: "经营利润率由经营利润除以营业收入确定性计算。当前口径跨期可比。",
+        type: "公式推算",
+        evidence: "margin-pressure"
+      },
+      cashflow: {
+        eyebrow: "OPERATING CASH FLOW · QUARTERLY",
+        value: "¥24.8B",
+        values: [17, 20, 23, 24, 25, 27, 28, 25],
+        commentary: "经营现金流仍为正且覆盖资本支出，但较上一季度回落。",
+        boundary: "季度现金流受营运资本变化影响，重点看连续季度趋势，不使用单季环比得出长期结论。",
+        type: "官方披露",
+        evidence: "operating-cash"
+      },
+      fcf: {
+        eyebrow: "FREE CASH FLOW · QUARTERLY",
+        value: "¥19.1B",
+        values: [14, 17, 19, 19, 21, 22, 23, 19],
+        commentary: "自由现金流同比下降，主要因为经营现金流增长放缓且资本支出增加。",
+        boundary: "自由现金流为系统口径：经营现金流减资本支出，不代表公司官方非 GAAP 指标。",
+        type: "公式推算",
+        evidence: "fcf-formula"
+      },
+      marketing: {
+        eyebrow: "MARKETING EXPENSE RATIO · QUARTERLY",
+        value: "31.6%",
+        values: [22, 24, 25, 28, 27, 28, 29, 32],
+        commentary: "销售与营销费用率继续上升，与管理层“保持高投入”的表述一致。",
+        boundary: "营销费用无法唯一对应海外业务，也不能据此倒推海外收入或获客成本。",
+        type: "公式推算",
+        evidence: "guidance-check"
+      },
+      cash: {
+        eyebrow: "CASH & SHORT-TERM INVESTMENTS",
+        value: "¥342B",
+        values: [248, 261, 276, 286, 302, 317, 329, 342],
+        commentary: "现金及短期投资继续增长，当前资金储备能够覆盖现阶段投入。",
+        boundary: "现金储备充足不等于投入具有效率，也不能抵消利润率和现金流转换率下降的信号。",
+        type: "官方披露",
+        evidence: "cash-position"
+      }
+    };
+
+    function refreshIcons() {
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function showToast(message, type = "success") {
+      const region = $("#toast-region");
+      const toast = document.createElement("div");
+      toast.className = `toast ${type === "warning" ? "warning" : ""}`;
+      toast.innerHTML = `<i data-lucide="${type === "warning" ? "triangle-alert" : "circle-check"}" class="icon"></i><span>${message}</span>`;
+      region.appendChild(toast);
+      refreshIcons();
+      setTimeout(() => toast.remove(), 3200);
+    }
+
+    function openModal(id) {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      modal.classList.add("open");
+      const input = modal.querySelector("input");
+      if (input) setTimeout(() => input.focus(), 80);
+    }
+
+    function closeModal(modal) {
+      modal.classList.remove("open");
+    }
+
+    function activateTab(group, panelId) {
+      $$(`[data-tab-group="${group}"]`).forEach(button => {
+        button.classList.toggle("active", button.dataset.tab === panelId);
+      });
+      $$(`[data-panel-group="${group}"]`).forEach(panel => {
+        panel.classList.toggle("active", panel.id === panelId);
+      });
+    }
+
+    function setSource(sourceKey) {
+      const source = sourceMap[sourceKey] || sourceMap["service-revenue"];
+      $("#source-title").textContent = source.title;
+      $("#source-type").textContent = source.type;
+      $("#source-date").textContent = source.date;
+      $("#source-period").textContent = source.period;
+      $("#source-location").textContent = source.location;
+      $("#source-original").textContent = source.original;
+      $("#source-translation").textContent = source.translation;
+    }
+
+    function openEvidence(key) {
+      const item = evidenceMap[key] || evidenceMap["overseas-growth"];
+      $("#drawer-title").textContent = item.title;
+      setSource(item.source);
+      document.body.classList.add("drawer-open");
+      $("#evidence-drawer").setAttribute("aria-hidden", "false");
+      activateTab("drawer", item.formula ? "formula-panel" : "chain-panel");
+      setTimeout(refreshIcons, 20);
+    }
+
+    function closeEvidence() {
+      document.body.classList.remove("drawer-open");
+      $("#evidence-drawer").setAttribute("aria-hidden", "true");
+    }
+
+    function focusQuestion(targetId) {
+      const card = document.getElementById(targetId);
+      if (!card) return;
+      history.replaceState(null, "", `#${targetId}`);
+      card.scrollIntoView({ behavior: "smooth", block: "start" });
+      $$(".research-question-card").forEach(item => item.classList.remove("focused"));
+      card.classList.add("focused");
+      setTimeout(() => card.classList.remove("focused"), 1800);
+      $$(".research-nav-item").forEach(item => item.classList.toggle("active", item.dataset.target === targetId));
+    }
+
+    function renderMetric(key) {
+      const data = metricData[key];
+      if (!data) return;
+      $("#metric-eyebrow").textContent = data.eyebrow;
+      $("#metric-big-number").innerHTML = `${data.value} <small>2026 Q1</small>`;
+      $("#metric-commentary").textContent = data.commentary;
+      $("#metric-boundary").textContent = data.boundary;
+      const button = $("#metric-evidence-button");
+      button.dataset.openEvidence = data.evidence;
+      button.lastChild.textContent = data.type;
+      const max = Math.max(...data.values) * 1.1;
+      $("#metric-chart").innerHTML = data.values.map((value, index) => {
+        const labels = ["24 Q2", "24 Q3", "24 Q4", "25 Q1", "25 Q2", "25 Q3", "25 Q4", "26 Q1"];
+        const height = Math.max(8, Math.round(value / max * 100));
+        return `<div class="bar-column"><span class="bar-value">${value}</span><span class="bar ${index === 7 ? "latest" : ""}" style="height:${height}%"><span class="bar-label">${labels[index]}</span></span></div>`;
+      }).join("");
+    }
+
+    function toggleAI(open = null) {
+      const assistant = $("#ai-assistant");
+      assistant.classList.toggle("open", open === null ? !assistant.classList.contains("open") : open);
+      if (assistant.classList.contains("open")) setTimeout(() => $("#ai-input").focus(), 80);
+    }
+
+    function askAI(question) {
+      const messages = $("#ai-messages");
+      const user = document.createElement("div");
+      user.className = "chat-bubble user";
+      user.textContent = question;
+      messages.appendChild(user);
+      const loading = document.createElement("div");
+      loading.className = "chat-bubble assistant";
+      loading.innerHTML = `<div class="loading-dots"><span></span><span></span><span></span></div>`;
+      messages.appendChild(loading);
+      messages.scrollTop = messages.scrollHeight;
+      setTimeout(() => {
+        loading.innerHTML = `
+          当前官方证据支持“收入增量开始覆盖部分新增投入”，但不能证明海外业务已盈利。关键依据是交易服务收入增速高于履约相关成本增速；反面证据是经营利润率继续下降。公司没有单独披露海外收入、利润和用户留存。
+          <div>
+            <button class="chat-citation" data-open-evidence="overseas-growth"><i data-lucide="file-text" class="icon icon-sm"></i>[1] Q1 6-K p.4</button>
+            <button class="chat-citation" data-open-evidence="margin-pressure"><i data-lucide="calculator" class="icon icon-sm"></i>[2] 利润率推算</button>
+          </div>
+          <div class="chat-track-action">
+            <span style="font-size:9px;color:var(--ink-faint)">这是聊天发现，不会自动写入正式档案</span>
+            <button class="primary-button compact-button add-chat-to-track" type="button">加入跟踪</button>
+          </div>
+        `;
+        refreshIcons();
+        messages.scrollTop = messages.scrollHeight;
+      }, 900);
+    }
+
+    function runSyncSimulation() {
+      const steps = $$("#run-steps .run-step");
+      const bar = $("#sync-progress-bar");
+      $("#start-sync").disabled = true;
+      let index = 0;
+      steps.forEach(step => {
+        step.classList.remove("done", "running");
+        $(".run-step-status", step).textContent = "WAITING";
+      });
+      bar.style.width = "0%";
+      const next = () => {
+        if (index > 0) {
+          const previous = steps[index - 1];
+          previous.classList.remove("running");
+          previous.classList.add("done");
+          $(".run-step-status", previous).textContent = "DONE";
+          $(".run-step-index", previous).innerHTML = '<i data-lucide="check" class="icon icon-sm"></i>';
+        }
+        if (index === steps.length) {
+          bar.style.width = "100%";
+          $("#start-sync").disabled = false;
+          $("#start-sync").innerHTML = '<i data-lucide="check" class="icon icon-sm"></i>同步完成';
+          refreshIcons();
+          showToast("官方材料同步完成：未发现比当前快照更新的关键披露");
+          return;
+        }
+        const current = steps[index];
+        current.classList.add("running");
+        $(".run-step-status", current).textContent = "RUNNING";
+        bar.style.width = `${Math.round(index / steps.length * 100)}%`;
+        refreshIcons();
+        index += 1;
+        setTimeout(next, 620);
+      };
+      next();
+    }
+
+    document.addEventListener("click", event => {
+      const evidenceTrigger = event.target.closest("[data-open-evidence]");
+      if (evidenceTrigger) {
+        event.preventDefault();
+        openEvidence(evidenceTrigger.dataset.openEvidence);
+        return;
+      }
+
+      const sourceTrigger = event.target.closest("[data-source-key]");
+      if (sourceTrigger) {
+        setSource(sourceTrigger.dataset.sourceKey);
+        activateTab("drawer", "source-panel");
+        return;
+      }
+
+      const navItem = event.target.closest(".research-nav-item");
+      if (navItem) {
+        focusQuestion(navItem.dataset.target);
+        return;
+      }
+
+      const tab = event.target.closest(".tab-button");
+      if (tab) {
+        activateTab(tab.dataset.tabGroup, tab.dataset.tab);
+        return;
+      }
+
+      const expandChange = event.target.closest(".expand-change");
+      if (expandChange) {
+        const card = expandChange.closest(".change-card");
+        card.classList.toggle("expanded");
+        expandChange.firstChild.textContent = card.classList.contains("expanded") ? "收起分析 " : "展开分析 ";
+        return;
+      }
+
+      const expandQuestion = event.target.closest(".question-expand-toggle");
+      if (expandQuestion) {
+        const card = expandQuestion.closest(".research-question-card");
+        const expanded = card.classList.toggle("expanded");
+        expandQuestion.setAttribute("aria-expanded", String(expanded));
+        return;
+      }
+
+      const noteButton = event.target.closest(".note-button");
+      if (noteButton) {
+        noteButton.closest(".research-question-card").classList.toggle("editing-note");
+        return;
+      }
+
+      const cancelNote = event.target.closest(".cancel-note");
+      if (cancelNote) {
+        cancelNote.closest(".research-question-card").classList.remove("editing-note");
+        return;
+      }
+
+      const saveNote = event.target.closest(".save-note");
+      if (saveNote) {
+        saveNote.closest(".research-question-card").classList.remove("editing-note");
+        showToast("用户判断与备注已保存，并冻结到当前快照");
+        return;
+      }
+
+      const markRead = event.target.closest(".mark-read-button");
+      if (markRead) {
+        markRead.disabled = true;
+        markRead.style.opacity = ".45";
+        markRead.dataset.tooltip = "已阅读";
+        const card = markRead.closest(".research-question-card");
+        const nav = $(`.research-nav-item[data-target="${card.id}"]`);
+        if (nav) {
+          const unread = $(".unread-dot", nav);
+          if (unread) unread.remove();
+          $(".nav-question-meta", nav).textContent = "已阅读 · 本期快照";
+        }
+        showToast("已标记为已读；出现新的重要证据时会自动恢复未读");
+        return;
+      }
+
+      const pinButton = event.target.closest(".pin-button");
+      if (pinButton) {
+        const pressed = pinButton.getAttribute("aria-pressed") === "true";
+        pinButton.setAttribute("aria-pressed", String(!pressed));
+        pinButton.style.color = pressed ? "" : "var(--warning)";
+        showToast(pressed ? "已取消置顶，系统排序将重新生效" : "已置顶；系统更新不会覆盖你的手动顺序");
+        return;
+      }
+
+      const validationAdd = event.target.closest(".validation-add");
+      if (validationAdd) {
+        const text = prompt("添加一个下期可验证条件：");
+        if (text && text.trim()) {
+          const list = validationAdd.previousElementSibling;
+          const item = document.createElement("li");
+          item.className = "validation-item";
+          item.innerHTML = `<input type="checkbox" checked> <span>${text.trim()}</span>`;
+          list.appendChild(item);
+          showToast("验证条件已加入，发布快照时将冻结保存");
+        }
+        return;
+      }
+
+      const metricItem = event.target.closest(".metric-item");
+      if (metricItem) {
+        $$(".metric-item").forEach(item => item.classList.remove("active"));
+        metricItem.classList.add("active");
+        renderMetric(metricItem.dataset.metric);
+        return;
+      }
+
+      const disclosure = event.target.closest(".disclosure-head");
+      if (disclosure) {
+        disclosure.closest(".financial-disclosure").classList.toggle("open");
+        return;
+      }
+
+      const financialRow = event.target.closest(".financial-table tr[data-open-evidence]");
+      if (financialRow) {
+        openEvidence(financialRow.dataset.openEvidence);
+        return;
+      }
+
+      const suggestion = event.target.closest(".suggestion-button");
+      if (suggestion) {
+        askAI(suggestion.textContent.trim());
+        return;
+      }
+
+      const addTrack = event.target.closest(".add-chat-to-track");
+      if (addTrack) {
+        addTrack.textContent = "已加入候选";
+        addTrack.disabled = true;
+        showToast("已创建研究问题候选；正式加入前需要你确认");
+        return;
+      }
+
+      const commandResult = event.target.closest(".command-result");
+      if (commandResult) {
+        closeModal($("#command-modal"));
+        const target = document.getElementById(commandResult.dataset.commandTarget);
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+
+      const modalClose = event.target.closest(".modal-close");
+      if (modalClose) {
+        closeModal(modalClose.closest(".modal-backdrop"));
+      }
+    });
+
+    $("#close-drawer").addEventListener("click", closeEvidence);
+    $("#compare-toggle").addEventListener("click", function () {
+      const enabled = this.getAttribute("aria-pressed") !== "true";
+      this.setAttribute("aria-pressed", String(enabled));
+      document.body.classList.toggle("compare-mode", enabled);
+      showToast(enabled ? "已显示与上一期的差异" : "已退出对比模式");
+    });
+
+    $("#period-select").addEventListener("change", function () {
+      const snapshot = periodSnapshots[this.value];
+      $("#snapshot-id").textContent = snapshot.id;
+      $("#cutoff-date").textContent = snapshot.cutoff;
+      $("#page-title").textContent = snapshot.title;
+      document.body.classList.toggle("compare-mode", false);
+      $("#compare-toggle").setAttribute("aria-pressed", "false");
+      showToast(`已切换至 ${this.options[this.selectedIndex].text} 历史快照`);
+    });
+
+    $("#sync-button").addEventListener("click", () => openModal("sync-modal"));
+    $("#open-run-status").addEventListener("click", () => openModal("sync-modal"));
+    $("#start-sync").addEventListener("click", runSyncSimulation);
+    $("#add-question-button").addEventListener("click", () => openModal("add-question-modal"));
+    $("#create-question").addEventListener("click", () => {
+      const question = $("#new-question").value.trim();
+      if (!question) {
+        $("#new-question").focus();
+        showToast("请先填写要持续验证的问题", "warning");
+        return;
+      }
+      closeModal($("#add-question-modal"));
+      showToast("研究问题已创建，结构化分析任务已进入队列");
+      $("#new-question").value = "";
+      $("#new-question-reason").value = "";
+    });
+
+    $("#mark-all-read").addEventListener("click", () => {
+      $$(".unread-dot").forEach(dot => dot.remove());
+      $$(".mark-read-button").forEach(button => {
+        button.disabled = true;
+        button.style.opacity = ".45";
+      });
+      showToast("当前快照的 5 个研究问题已全部标为已读");
+    });
+
+    $("#command-trigger").addEventListener("click", () => openModal("command-modal"));
+    $("#company-switcher").addEventListener("click", () => showToast("MVP 仅配置 PDD；公司选择器用于展示后续扩展形态", "warning"));
+    $("#source-link-button").addEventListener("click", () => showToast("这是交互原型，正式版本将打开对应官方文件与页码", "warning"));
+    $("#copy-citation").addEventListener("click", async () => {
+      const citation = `${$("#source-title").textContent} · ${$("#source-location").textContent} · ${$("#source-date").textContent}`;
+      try { await navigator.clipboard.writeText(citation); } catch (_) {}
+      showToast("引用信息已复制");
+    });
+    $("#ask-about-evidence").addEventListener("click", () => {
+      toggleAI(true);
+      $("#ai-input").value = `请解释这条证据：${$("#source-title").textContent}`;
+      $("#ai-input").focus();
+    });
+
+    $("#ai-launcher").addEventListener("click", () => toggleAI());
+    $("#open-ai-header").addEventListener("click", () => toggleAI(true));
+    $("#close-ai").addEventListener("click", () => toggleAI(false));
+    $("#ai-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const input = $("#ai-input");
+      const question = input.value.trim();
+      if (!question) return;
+      askAI(question);
+      input.value = "";
+    });
+
+    $$(".modal-backdrop").forEach(backdrop => {
+      backdrop.addEventListener("click", event => {
+        if (event.target === backdrop) closeModal(backdrop);
+      });
+    });
+
+    document.addEventListener("keydown", event => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openModal("command-modal");
+      }
+      if (event.key === "Escape") {
+        $$(".modal-backdrop.open").forEach(closeModal);
+        closeEvidence();
+        toggleAI(false);
+      }
+      if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "e" && !/input|textarea|select/i.test(document.activeElement.tagName)) {
+        openEvidence("overseas-growth");
+      }
+    });
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting || !entry.target.id.startsWith("question-")) return;
+        $$(".research-nav-item").forEach(item => item.classList.toggle("active", item.dataset.target === entry.target.id));
+      });
+    }, { rootMargin: "-25% 0px -60% 0px" });
+
+    $$(".research-question-card").forEach(card => observer.observe(card));
+
+    refreshIcons();
+  </script>
+</body>
+</html>
