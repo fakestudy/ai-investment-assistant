@@ -105,7 +105,7 @@ async def create_chat_run(
         id=outbox_id,
         event_type="agent.run.start",
         aggregate_id=run_id,
-        payload={"runId": run_id},
+        payload=_start_command_payload(run_id, generate_title=request.generate_title),
         status="pending",
         attempt_count=0,
         available_at=now,
@@ -142,3 +142,10 @@ async def create_chat_run(
         run=run,
         outbox=persisted_outbox,
     )
+
+
+def _start_command_payload(run_id: str, *, generate_title: bool) -> dict[str, object]:
+    payload: dict[str, object] = {"runId": run_id}
+    if generate_title:
+        payload["generateTitle"] = True
+    return payload

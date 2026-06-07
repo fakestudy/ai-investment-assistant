@@ -668,6 +668,11 @@ def _tool_call_events(
 
 def _stream_message(stream_item: object) -> object:
     if isinstance(stream_item, tuple):
+        if len(stream_item) == 2 and isinstance(stream_item[0], str):
+            mode, payload = stream_item
+            if mode == "messages":
+                return _stream_message(payload)
+            return payload
         return stream_item[0]
     return stream_item
 

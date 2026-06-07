@@ -43,6 +43,11 @@ class ChatRunServiceTest(unittest.TestCase):
     def test_create_run_persists_and_streams_run_created_event(self) -> None:
         asyncio.run(self._test_create_run_persists_and_streams_run_created_event())
 
+    def test_create_run_includes_generate_title_in_start_outbox_payload(self) -> None:
+        asyncio.run(
+            self._test_create_run_includes_generate_title_in_start_outbox_payload()
+        )
+
     async def _test_create_run_commits_messages_run_and_outbox_together(self) -> None:
         conversation_id = "conversation-chat-run-create"
         await self._reset_conversation(conversation_id)
@@ -101,6 +106,56 @@ class ChatRunServiceTest(unittest.TestCase):
             self.assertEqual(result.run.id, "run-1")
             self.assertEqual(result.outbox.id, "outbox-1")
 
+        await self._reset_conversation(conversation_id)
+
+    async def _test_create_run_includes_generate_title_in_start_outbox_payload(
+        self,
+    ) -> None:
+        conversation_id = "conversation-chat-run-generate-title-outbox"
+        await self._reset_conversation(conversation_id)
+        now = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
+
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Conversation(
+                    id=conversation_id,
+                    title="Run title outbox",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+            result = await create_chat_run(
+                session,
+                ChatStreamRequest.model_validate(
+                    {
+                        "conversationId": conversation_id,
+                        "message": "启动分析",
+                        "generateTitle": True,
+                    }
+                ),
+                id_factory=IdFactory(
+                    [
+                        "user-message-title-outbox",
+                        "assistant-message-title-outbox",
+                        "run-title-outbox",
+                        "outbox-title-outbox",
+                    ]
+                ),
+                now_factory=lambda: now,
+            )
+            await session.commit()
+
+        async with AsyncSessionLocal() as session:
+            outbox = await session.get(OutboxEvent, result.outbox.id)
+
+        self.assertIsNotNone(outbox)
+        assert outbox is not None
+        self.assertEqual(
+            outbox.payload,
+            {"runId": result.run.id, "generateTitle": True},
+        )
         await self._reset_conversation(conversation_id)
 
     async def _test_create_run_persists_and_streams_run_created_event(self) -> None:
