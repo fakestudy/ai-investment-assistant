@@ -1,25 +1,40 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from inspect import isawaitable
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
 from uuid import uuid4
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
+from langgraph.types import Interrupt
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.agent_run import AgentRun
+from model.agent_run_event import AgentRunEvent
+from model.approval import ApprovalBatch, ApprovalRequest
 from model.message_part import MessagePart
+from model.outbox_event import OutboxEvent
 from repository.conversation import update_conversation_title
 from model.tool_invocation import ToolInvocation
+from repository.approval import (
+    create_approval_batch,
+    create_approval_request,
+    get_approval_batch_by_interrupt_id,
+    next_approval_batch_sequence,
+)
 from repository.message import update_message
 from repository.message_part import create_message_part, update_message_part_text
+from repository.outbox_event import create_outbox_event
 from repository.tool_invocation import create_tool_invocation, update_tool_invocation
 from service.chat import (
     TimelineState,
     _content_text,
+    _format_datetime,
     _reasoning_text,
     _stream_message,
     _tool_call_events,
@@ -28,6 +43,15 @@ from service.run_events import append_run_event
 
 
 NowFactory = Callable[[], datetime]
+
+
+@dataclass(frozen=True)
+class ApprovalProjectionResult:
+    batch: ApprovalBatch
+    requests: list[ApprovalRequest]
+    part: MessagePart
+    event: AgentRunEvent
+    outbox: OutboxEvent
 
 
 class StreamProjection:
@@ -52,6 +76,11 @@ class StreamProjection:
         session: AsyncSession,
         stream_item: object,
     ) -> list[dict[str, Any]]:
+        interrupt = _stream_interrupt(stream_item)
+        if interrupt is not None:
+            result = await self.project_interrupt(session, interrupt)
+            return [result.event.payload]
+
         message = _stream_message(stream_item)
 
         if isinstance(message, AIMessageChunk):
@@ -83,6 +112,19 @@ class StreamProjection:
                 "conversationId": self.run.conversation_id,
                 "title": title,
             },
+        )
+
+    async def project_interrupt(
+        self,
+        session: AsyncSession,
+        interrupt: Interrupt,
+    ) -> ApprovalProjectionResult:
+        return await project_interrupt(
+            session,
+            self.run,
+            interrupt,
+            now=self.now_factory(),
+            next_order_index=self.timeline_state.next_order_index,
         )
 
     async def project_error(
@@ -363,6 +405,140 @@ class StreamProjection:
         self.run.updated_at = self.now_factory()
 
 
+async def project_interrupt(
+    session: AsyncSession,
+    run: AgentRun,
+    interrupt: Interrupt,
+    *,
+    now: datetime,
+    next_order_index: int | None = None,
+) -> ApprovalProjectionResult:
+    action_requests = _interrupt_action_requests(interrupt)
+    existing = await get_approval_batch_by_interrupt_id(
+        session,
+        agent_run_id=run.id,
+        interrupt_id=interrupt.id,
+    )
+    if existing is not None:
+        return await _existing_approval_projection(session, existing)
+
+    try:
+        async with session.begin_nested():
+            sequence = await next_approval_batch_sequence(session, agent_run_id=run.id)
+            batch_id = f"approval-batch-{run.id}-{sequence}"
+            expires_at = now + timedelta(minutes=30)
+            batch = await create_approval_batch(
+                session,
+                ApprovalBatch(
+                    id=batch_id,
+                    agent_run_id=run.id,
+                    assistant_message_id=run.assistant_message_id,
+                    interrupt_id=interrupt.id,
+                    sequence=sequence,
+                    status="pending",
+                    expires_at=expires_at,
+                    resolution_source=None,
+                    created_at=now,
+                    resolved_at=None,
+                ),
+            )
+    except IntegrityError:
+        existing = await get_approval_batch_by_interrupt_id(
+            session,
+            agent_run_id=run.id,
+            interrupt_id=interrupt.id,
+        )
+        if existing is None:
+            raise
+        return await _existing_approval_projection(session, existing)
+
+    tool_invocations = await _pending_tool_invocations_for_interrupt(
+        session,
+        run=run,
+        action_requests=action_requests,
+    )
+
+    requests: list[ApprovalRequest] = []
+    for order_index, (action_request, invocation) in enumerate(
+        zip(action_requests, tool_invocations, strict=True)
+    ):
+        invocation.status = "awaiting_approval"
+        request = await create_approval_request(
+            session,
+            ApprovalRequest(
+                id=f"{batch_id}-request-{order_index}",
+                approval_batch_id=batch.id,
+                tool_invocation_id=invocation.id,
+                order_index=order_index,
+                tool_name=str(action_request["name"]),
+                args=dict(action_request.get("args") or {}),
+                decision="pending",
+                decided_at=None,
+            ),
+        )
+        requests.append(request)
+
+    part_order_index = (
+        next_order_index
+        if next_order_index is not None
+        else await _next_message_part_order_index(session, run.assistant_message_id)
+    )
+    part = await create_message_part(
+        session,
+        MessagePart(
+            id=f"{batch_id}-part",
+            message_id=run.assistant_message_id,
+            type="approval",
+            order_index=part_order_index,
+            text="",
+            tool_invocation_id=None,
+            approval_batch_id=batch.id,
+            created_at=now,
+        ),
+    )
+    run.status = "awaiting_approval"
+    run.lease_owner = None
+    run.lease_expires_at = None
+    run.updated_at = now
+    outbox = await create_outbox_event(
+        session,
+        OutboxEvent(
+            id=f"{batch_id}-timeout",
+            event_type="approval.timeout.schedule",
+            aggregate_id=batch.id,
+            payload={
+                "batchId": batch.id,
+                "runId": run.id,
+                "expiresAt": _format_datetime(expires_at),
+            },
+            status="pending",
+            attempt_count=0,
+            available_at=now,
+            published_at=None,
+            last_error=None,
+            created_at=now,
+        ),
+    )
+    event = await append_run_event(
+        session,
+        run.id,
+        "approval_required",
+        {
+            "type": "approval_required",
+            "messageId": run.assistant_message_id,
+            "part": _approval_part_payload(part, batch, requests),
+        },
+    )
+    await session.flush()
+    return ApprovalProjectionResult(
+        batch=batch,
+        requests=requests,
+        part=part,
+        event=event,
+        outbox=outbox,
+    )
+
+
 async def project_stream_to_database(
     *,
     stream: AsyncIterator[object],
@@ -375,6 +551,19 @@ async def project_stream_to_database(
     projection = StreamProjection(run=run, now_factory=now_factory)
     try:
         async for item in stream:
+            if _stream_interrupt(item) is not None:
+                await _project_and_commit(
+                    session_factory=session_factory,
+                    run=run,
+                    projector=lambda session, attached_run, item=item: _project_item(
+                        projection,
+                        attached_run,
+                        session,
+                        item,
+                    ),
+                    after_commit=after_commit,
+                )
+                return
             await _project_and_commit(
                 session_factory=session_factory,
                 run=run,
@@ -488,6 +677,168 @@ async def _project_title(
 ) -> dict[str, Any]:
     projection.run = run
     return await projection.project_title(session, title)
+
+
+def _stream_interrupt(stream_item: object) -> Interrupt | None:
+    payload = None
+    if (
+        isinstance(stream_item, tuple)
+        and len(stream_item) == 2
+        and stream_item[0] == "updates"
+        and isinstance(stream_item[1], dict)
+    ):
+        payload = stream_item[1]
+    elif isinstance(stream_item, dict):
+        payload = stream_item
+
+    if not isinstance(payload, dict):
+        return None
+
+    interrupts = payload.get("__interrupt__")
+    if not interrupts:
+        return None
+    if isinstance(interrupts, Interrupt):
+        return interrupts
+    if isinstance(interrupts, (list, tuple)) and interrupts:
+        first = interrupts[0]
+        return first if isinstance(first, Interrupt) else None
+    return None
+
+
+def _interrupt_action_requests(interrupt: Interrupt) -> list[dict[str, Any]]:
+    value = interrupt.value
+    if isinstance(value, dict):
+        action_requests = value.get("action_requests")
+    else:
+        action_requests = getattr(value, "action_requests", None)
+    if not isinstance(action_requests, list) or not action_requests:
+        raise RuntimeError(f"Interrupt has no action requests: {interrupt.id}")
+    return [dict(action_request) for action_request in action_requests]
+
+
+async def _pending_tool_invocations_for_interrupt(
+    session: AsyncSession,
+    *,
+    run: AgentRun,
+    action_requests: list[dict[str, Any]],
+) -> list[ToolInvocation]:
+    result = await session.execute(
+        select(ToolInvocation)
+        .join(
+            MessagePart,
+            MessagePart.tool_invocation_id == ToolInvocation.id,
+        )
+        .where(ToolInvocation.message_id == run.assistant_message_id)
+        .where(ToolInvocation.status == "running")
+        .order_by(MessagePart.order_index.asc())
+    )
+    available = list(result.scalars().all())
+    matched: list[ToolInvocation] = []
+    for action_request in action_requests:
+        action_name = str(action_request["name"])
+        action_args = dict(action_request.get("args") or {})
+        match_index = next(
+            (
+                index
+                for index, invocation in enumerate(available)
+                if invocation.tool_name == action_name and invocation.args == action_args
+            ),
+            None,
+        )
+        if match_index is None:
+            raise RuntimeError(
+                "Interrupt action does not match a pending tool invocation: "
+                f"{action_name} {action_args}"
+            )
+        matched.append(available.pop(match_index))
+    return matched
+
+
+async def _next_message_part_order_index(
+    session: AsyncSession,
+    message_id: str,
+) -> int:
+    result = await session.execute(
+        select(MessagePart.order_index)
+        .where(MessagePart.message_id == message_id)
+        .order_by(MessagePart.order_index.desc())
+        .limit(1)
+    )
+    current = result.scalar_one_or_none()
+    return 0 if current is None else current + 1
+
+
+async def _existing_approval_projection(
+    session: AsyncSession,
+    batch: ApprovalBatch,
+) -> ApprovalProjectionResult:
+    request_rows = await session.execute(
+        select(ApprovalRequest)
+        .where(ApprovalRequest.approval_batch_id == batch.id)
+        .order_by(ApprovalRequest.order_index.asc())
+    )
+    requests = list(request_rows.scalars().all())
+    part_rows = await session.execute(
+        select(MessagePart).where(MessagePart.approval_batch_id == batch.id).limit(1)
+    )
+    part = part_rows.scalar_one()
+    event_rows = await session.execute(
+        select(AgentRunEvent)
+        .where(AgentRunEvent.agent_run_id == batch.agent_run_id)
+        .where(AgentRunEvent.event_type == "approval_required")
+        .order_by(AgentRunEvent.id.desc())
+    )
+    event = next(
+        (
+            row
+            for row in event_rows.scalars().all()
+            if row.payload.get("part", {}).get("batch", {}).get("id") == batch.id
+        ),
+        None,
+    )
+    if event is None:
+        raise RuntimeError(f"Approval event not found for batch: {batch.id}")
+    outbox_rows = await session.execute(
+        select(OutboxEvent)
+        .where(OutboxEvent.aggregate_id == batch.id)
+        .where(OutboxEvent.event_type == "approval.timeout.schedule")
+        .limit(1)
+    )
+    outbox = outbox_rows.scalar_one()
+    return ApprovalProjectionResult(
+        batch=batch,
+        requests=requests,
+        part=part,
+        event=event,
+        outbox=outbox,
+    )
+
+
+def _approval_part_payload(
+    part: MessagePart,
+    batch: ApprovalBatch,
+    requests: list[ApprovalRequest],
+) -> dict[str, Any]:
+    return {
+        "id": part.id,
+        "type": "approval",
+        "orderIndex": part.order_index,
+        "batch": {
+            "id": batch.id,
+            "status": batch.status,
+            "expiresAt": _format_datetime(batch.expires_at),
+            "requests": [
+                {
+                    "id": request.id,
+                    "toolInvocationId": request.tool_invocation_id,
+                    "toolName": request.tool_name,
+                    "args": request.args,
+                    "decision": request.decision,
+                }
+                for request in requests
+            ],
+        },
+    }
 
 
 async def _resolve_generated_title(

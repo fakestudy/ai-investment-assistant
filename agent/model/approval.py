@@ -23,6 +23,11 @@ class ApprovalBatch(Base):
             "sequence",
             name="uq_approval_batches_agent_run_sequence",
         ),
+        UniqueConstraint(
+            "agent_run_id",
+            "interrupt_id",
+            name="uq_approval_batches_agent_run_interrupt",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)

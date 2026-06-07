@@ -80,6 +80,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['agent_run_id'], ['agent_runs.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['assistant_message_id'], ['messages.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('agent_run_id', 'interrupt_id', name='uq_approval_batches_agent_run_interrupt'),
     sa.UniqueConstraint('agent_run_id', 'sequence', name='uq_approval_batches_agent_run_sequence')
     )
     op.create_index(op.f('ix_approval_batches_agent_run_id'), 'approval_batches', ['agent_run_id'], unique=False)
