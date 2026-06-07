@@ -21,6 +21,13 @@ type ResumableStreamingState = {
 	streamingMessageId?: string;
 };
 
+type ConversationInputLockState = {
+	runsByConversationId: Record<
+		string,
+		{ status: "streaming" | "awaiting_approval" | "resuming" } | undefined
+	>;
+};
+
 type StreamCreatedMessage = {
 	content: string;
 	reasoning?: string;
@@ -42,6 +49,22 @@ export function isActiveConversationStreaming({
 		isStreaming &&
 			activeConversationId &&
 			streamingConversationId === activeConversationId,
+	);
+}
+
+export function isConversationInputLocked(
+	state: ConversationInputLockState,
+	conversationId: string | undefined,
+): boolean {
+	if (!conversationId) {
+		return false;
+	}
+
+	const run = state.runsByConversationId[conversationId];
+	return (
+		run?.status === "streaming" ||
+		run?.status === "awaiting_approval" ||
+		run?.status === "resuming"
 	);
 }
 

@@ -7,6 +7,7 @@ import {
 	getResumableStreamingMessageId,
 	getVisibleMessageWindow,
 	isActiveConversationStreaming,
+	isConversationInputLocked,
 	resetStreamCreatedMessage,
 	resolveLoadedConversationMessages,
 	upsertToolTimelinePart,
@@ -39,6 +40,22 @@ test("isActiveConversationStreaming only locks the active conversation", () => {
 		}),
 		true,
 	);
+});
+
+test("isConversationInputLocked locks only the conversation with an active run", () => {
+	const state = {
+		runsByConversationId: {
+			"conversation-1": {
+				runId: "run-1",
+				assistantMessageId: "assistant-1",
+				status: "awaiting_approval" as const,
+			},
+		},
+	};
+
+	assert.equal(isConversationInputLocked(state, "conversation-1"), true);
+	assert.equal(isConversationInputLocked(state, "conversation-2"), false);
+	assert.equal(isConversationInputLocked(state, undefined), false);
 });
 
 test("getVisibleMessageWindow returns the latest bounded message slice", () => {

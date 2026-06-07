@@ -30,14 +30,11 @@ type ChatState = {
 	conversations: Conversation[];
 	activeConversationId?: string;
 	messagesByConversationId: Record<string, ChatMessage[]>;
-	activeRunsByConversationId: Record<string, ConversationRunState | undefined>;
+	runsByConversationId: Record<string, ConversationRunState | undefined>;
+	controllersByConversationId: Record<string, AbortController | undefined>;
 	isLoadingConversations: boolean;
 	isLoadingMessages: boolean;
-	isStreaming: boolean;
-	streamingConversationId?: string;
-	streamingMessageId?: string;
 	error?: ChatError;
-	abortController?: AbortController;
 	loadConversations: (options?: LoadConversationsOptions) => Promise<void>;
 	createNewConversation: () => Promise<void>;
 	clearActiveConversation: () => void;
@@ -199,38 +196,21 @@ const reduceStreamUiSideEffects = (
 		};
 	}
 
-	if (event.type === "run_created") {
-		return {
-			streamingMessageId: event.assistantMessageId,
-		};
-	}
-
 	if (event.type === "error") {
 		return {
-			isStreaming: false,
-			streamingConversationId: undefined,
-			streamingMessageId: undefined,
-			abortController: undefined,
 			error: { message: event.message, scope: "stream" },
 		};
 	}
 
-	if (event.type === "message_created") {
-		return {
-			streamingMessageId: event.message.id,
-		};
-	}
-
-	if (event.type === "done") {
-		return {
-			isStreaming: false,
-			streamingConversationId: undefined,
-			streamingMessageId: undefined,
-			abortController: undefined,
-		};
-	}
-
 	return {};
+};
+
+const withoutRecordKey = <T>(
+	record: Record<string, T | undefined>,
+	key: string,
+): Record<string, T | undefined> => {
+	const { [key]: _removed, ...rest } = record;
+	return rest;
 };
 
 type StartStreamInput = {
@@ -250,25 +230,29 @@ const startStream = async (
 	get: () => ChatState,
 ) => {
 	const currentState = get();
+	const currentController =
+		currentState.controllersByConversationId[input.conversationId];
+	const currentRun = currentState.runsByConversationId[input.conversationId];
 	if (
 		input.initialMessageId &&
-		currentState.isStreaming &&
-		currentState.streamingMessageId === input.initialMessageId
+		currentController &&
+		!currentController.signal.aborted &&
+		currentRun?.assistantMessageId === input.initialMessageId
 	) {
 		return;
 	}
 
-	currentState.abortController?.abort();
+	currentController?.abort();
 
 	const abortController = new AbortController();
 
-	set({
-		isStreaming: true,
-		streamingConversationId: input.conversationId,
-		streamingMessageId: input.initialMessageId,
-		abortController,
+	set((state) => ({
+		controllersByConversationId: {
+			...state.controllersByConversationId,
+			[input.conversationId]: abortController,
+		},
 		error: undefined,
-	});
+	}));
 
 	try {
 		await input.connect(abortController.signal, (received) => {
@@ -277,7 +261,7 @@ const startStream = async (
 					received.event.type === "message_created"
 						? received.event.message.conversationId
 						: input.conversationId;
-				const activeRun = state.activeRunsByConversationId[eventConversationId];
+				const activeRun = state.runsByConversationId[eventConversationId];
 
 				const projected = reduceChatStreamEvent(
 					{
@@ -293,8 +277,8 @@ const startStream = async (
 						...state.messagesByConversationId,
 						[eventConversationId]: projected.messages,
 					},
-					activeRunsByConversationId: {
-						...state.activeRunsByConversationId,
+					runsByConversationId: {
+						...state.runsByConversationId,
 						[eventConversationId]: projected.activeRun,
 					},
 				};
@@ -309,12 +293,13 @@ const startStream = async (
 			}
 
 			const failedMessageId =
-				get().streamingMessageId ?? input.initialMessageId;
+				get().runsByConversationId[input.conversationId]?.assistantMessageId ??
+				input.initialMessageId;
 			set((state) => ({
-				isStreaming: false,
-				streamingConversationId: undefined,
-				streamingMessageId: undefined,
-				abortController: undefined,
+				controllersByConversationId: withoutRecordKey(
+					state.controllersByConversationId,
+					input.conversationId,
+				),
 				error: toChatError(error, "stream"),
 				messagesByConversationId: failedMessageId
 					? {
@@ -329,13 +314,16 @@ const startStream = async (
 			}));
 		}
 	} finally {
-		if (get().abortController === abortController) {
-			set({
-				isStreaming: false,
-				streamingConversationId: undefined,
-				streamingMessageId: undefined,
-				abortController: undefined,
-			});
+		if (
+			get().controllersByConversationId[input.conversationId] ===
+			abortController
+		) {
+			set((state) => ({
+				controllersByConversationId: withoutRecordKey(
+					state.controllersByConversationId,
+					input.conversationId,
+				),
+			}));
 		}
 	}
 };
@@ -349,6 +337,14 @@ const resumeActiveRun = (
 	get: () => ChatState,
 ) => {
 	if (!activeRun) {
+		return false;
+	}
+
+	if (
+		activeRun.status === "awaiting_approval" ||
+		activeRun.status === "completed" ||
+		activeRun.status === "failed"
+	) {
 		return false;
 	}
 
@@ -375,10 +371,10 @@ const resumeActiveRun = (
 export const useChatStore = create<ChatState>((set, get) => ({
 	conversations: [],
 	messagesByConversationId: {},
-	activeRunsByConversationId: {},
+	runsByConversationId: {},
+	controllersByConversationId: {},
 	isLoadingConversations: false,
 	isLoadingMessages: false,
-	isStreaming: false,
 
 	loadConversations: async (options) => {
 		if (!options?.force && get().conversations.length > 0) {
@@ -456,8 +452,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 							})
 						: messages,
 				},
-				activeRunsByConversationId: {
-					...state.activeRunsByConversationId,
+				runsByConversationId: {
+					...state.runsByConversationId,
 					[conversationId]: activeRun
 						? toConversationRunState(activeRun)
 						: undefined,
@@ -505,12 +501,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({ error: undefined });
 
 		try {
-			if (get().streamingConversationId === conversationId) {
-				const { streamingMessageId } = get();
-				if (streamingMessageId) {
-					void cancelChatStream(streamingMessageId);
-				}
-				get().abortController?.abort();
+			const run = get().runsByConversationId[conversationId];
+			if (run) {
+				void cancelChatStream(run.assistantMessageId);
+				get().controllersByConversationId[conversationId]?.abort();
 			}
 
 			await deleteConversation(conversationId);
@@ -523,27 +517,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					[conversationId]: _removedMessages,
 					...messagesByConversationId
 				} = state.messagesByConversationId;
+				const runsByConversationId = withoutRecordKey(
+					state.runsByConversationId,
+					conversationId,
+				);
+				const controllersByConversationId = withoutRecordKey(
+					state.controllersByConversationId,
+					conversationId,
+				);
 
 				return {
 					conversations,
 					activeConversationId: conversations[0]?.id,
 					messagesByConversationId,
-					isStreaming:
-						state.streamingConversationId === conversationId
-							? false
-							: state.isStreaming,
-					streamingConversationId:
-						state.streamingConversationId === conversationId
-							? undefined
-							: state.streamingConversationId,
-					streamingMessageId:
-						state.streamingConversationId === conversationId
-							? undefined
-							: state.streamingMessageId,
-					abortController:
-						state.streamingConversationId === conversationId
-							? undefined
-							: state.abortController,
+					runsByConversationId,
+					controllersByConversationId,
 				};
 			});
 
@@ -620,23 +608,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	stopStreaming: () => {
-		const { abortController, streamingConversationId, streamingMessageId } =
-			get();
-		if (streamingMessageId) {
-			void cancelChatStream(streamingMessageId);
+		const conversationId = get().activeConversationId;
+		if (!conversationId) {
+			return;
 		}
-		abortController?.abort();
+		const run = get().runsByConversationId[conversationId];
+		if (run) {
+			void cancelChatStream(run.assistantMessageId);
+		}
+		get().controllersByConversationId[conversationId]?.abort();
 
 		set((state) => ({
-			isStreaming: false,
-			streamingConversationId: undefined,
-			streamingMessageId: undefined,
-			abortController: undefined,
-			messagesByConversationId: streamingConversationId
+			runsByConversationId: withoutRecordKey(
+				state.runsByConversationId,
+				conversationId,
+			),
+			controllersByConversationId: withoutRecordKey(
+				state.controllersByConversationId,
+				conversationId,
+			),
+			messagesByConversationId: conversationId
 				? {
 						...state.messagesByConversationId,
-						[streamingConversationId]: (
-							state.messagesByConversationId[streamingConversationId] ?? []
+						[conversationId]: (
+							state.messagesByConversationId[conversationId] ?? []
 						).map((message) =>
 							message.status === "streaming"
 								? { ...message, status: "done" }

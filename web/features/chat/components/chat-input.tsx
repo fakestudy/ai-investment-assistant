@@ -5,17 +5,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { type KeyboardEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { isActiveConversationStreaming } from "../chat-ui-state";
+import { isConversationInputLocked } from "../chat-ui-state";
 import { useChatStore } from "../store";
 
 export function ChatInput() {
 	const [draft, setDraft] = useState("");
-	const activeConversationId = useChatStore(
-		(state) => state.activeConversationId,
-	);
-	const isStreaming = useChatStore((state) => state.isStreaming);
-	const streamingConversationId = useChatStore(
-		(state) => state.streamingConversationId,
+	const isLocked = useChatStore((state) =>
+		isConversationInputLocked(state, state.activeConversationId),
 	);
 	const sendMessage = useChatStore((state) => state.sendMessage);
 	const stopStreaming = useChatStore((state) => state.stopStreaming);
@@ -23,12 +19,7 @@ export function ChatInput() {
 	const router = useRouter();
 
 	const trimmedDraft = draft.trim();
-	const isCurrentConversationStreaming = isActiveConversationStreaming({
-		activeConversationId,
-		isStreaming,
-		streamingConversationId,
-	});
-	const canSend = trimmedDraft.length > 0 && !isCurrentConversationStreaming;
+	const canSend = trimmedDraft.length > 0 && !isLocked;
 
 	const submitMessage = () => {
 		if (!canSend) {
@@ -71,14 +62,14 @@ export function ChatInput() {
 						<Textarea
 							aria-label="Message"
 							className="max-h-52 min-h-12 resize-none border-0 bg-transparent px-3 py-3 text-[15px] text-zinc-900 shadow-none placeholder:text-zinc-400 focus-visible:ring-0"
-							disabled={isCurrentConversationStreaming}
+							disabled={isLocked}
 							onChange={(event) => setDraft(event.target.value)}
 							onKeyDown={handleKeyDown}
 							placeholder="Ask anything"
 							rows={1}
 							value={draft}
 						/>
-						{isCurrentConversationStreaming ? (
+						{isLocked ? (
 							<Button
 								aria-label="Stop response"
 								className="mb-1 size-9 rounded-full bg-zinc-900 text-white hover:bg-zinc-700"

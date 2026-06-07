@@ -10,9 +10,14 @@ function conversation(id: string, title: string) {
 	};
 }
 
+let storeImportCounter = 0;
+
 async function loadStore() {
-	const moduleUrl = new URL(`./store.ts?test=${Date.now()}`, import.meta.url)
-		.href;
+	storeImportCounter += 1;
+	const moduleUrl = new URL(
+		`./store.ts?test=${storeImportCounter}`,
+		import.meta.url,
+	).href;
 	return import(moduleUrl) as Promise<typeof import("./store")>;
 }
 
@@ -122,15 +127,65 @@ test("sendMessage force refreshes conversations after stream completes", async (
 	assert.equal(useChatStore.getState().conversations[0]?.title, "Synced");
 });
 
+test("different conversations keep independent stream controllers", async () => {
+	const { useChatStore } = await loadStore();
+	globalThis.fetch = async (input, init) => {
+		const url = String(input);
+
+		if (url.endsWith("/api/chat/stream")) {
+			return new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () =>
+					reject(new DOMException("Aborted", "AbortError")),
+				);
+			});
+		}
+
+		return new Response(
+			JSON.stringify([conversation("conversation-1", "First")]),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	useChatStore.setState({
+		activeConversationId: "conversation-1",
+		conversations: [
+			conversation("conversation-1", "First"),
+			conversation("conversation-2", "Second"),
+		],
+		messagesByConversationId: {
+			"conversation-1": [],
+			"conversation-2": [],
+		},
+	});
+
+	await useChatStore.getState().sendMessage("first");
+	useChatStore.setState({ activeConversationId: "conversation-2" });
+	await useChatStore.getState().sendMessage("second");
+
+	const state = useChatStore.getState();
+	assert.equal(Object.keys(state.controllersByConversationId).length, 2);
+	assert.notEqual(
+		state.controllersByConversationId["conversation-1"],
+		state.controllersByConversationId["conversation-2"],
+	);
+	assert.equal(
+		state.controllersByConversationId["conversation-1"]?.signal.aborted,
+		false,
+	);
+	state.controllersByConversationId["conversation-1"]?.abort();
+	state.controllersByConversationId["conversation-2"]?.abort();
+});
+
 test("selectConversation unwraps backend messages envelope", async () => {
 	const { useChatStore } = await loadStore();
 	useChatStore.setState({
 		activeConversationId: undefined,
 		messagesByConversationId: {},
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
+		runsByConversationId: {},
+		controllersByConversationId: {},
 	});
 	globalThis.fetch = async () =>
 		new Response(
@@ -169,6 +224,96 @@ test("selectConversation unwraps backend messages envelope", async () => {
 	});
 });
 
+test("selectConversation restores awaiting approval without resume request", async () => {
+	const { useChatStore } = await loadStore();
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	useChatStore.setState({
+		activeConversationId: undefined,
+		messagesByConversationId: {},
+	});
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		const url = String(input);
+
+		if (url.endsWith("/api/conversation/messages/conversation-1")) {
+			return new Response(
+				JSON.stringify({
+					messages: [
+						{
+							id: "assistant-1",
+							conversationId: "conversation-1",
+							role: "assistant",
+							content: "",
+							status: "streaming",
+							createdAt: "2026-01-01T00:00:00.000Z",
+							timelineParts: [
+								{
+									id: "approval-part-1",
+									type: "approval",
+									batch: {
+										id: "batch-1",
+										status: "pending",
+										expiresAt: "2026-01-01T00:30:00.000Z",
+										requests: [
+											{
+												id: "request-1",
+												toolInvocationId: "tool-1",
+												toolName: "get_weather",
+												args: { city: "Beijing" },
+												decision: "pending",
+											},
+										],
+									},
+								},
+							],
+						},
+					],
+					activeRun: {
+						runId: "run-1",
+						status: "awaiting_approval",
+						lastEventId: 42,
+						assistantMessageId: "assistant-1",
+						approvalBatch: {
+							id: "batch-1",
+							status: "pending",
+							expiresAt: "2026-01-01T00:30:00.000Z",
+							requests: [
+								{
+									id: "request-1",
+									toolInvocationId: "tool-1",
+									toolName: "get_weather",
+									args: { city: "Beijing" },
+									decision: "pending",
+								},
+							],
+						},
+					},
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+
+		return new Response("", { status: 500 });
+	};
+
+	await useChatStore.getState().selectConversation("conversation-1");
+
+	assert.equal(
+		calls.some((call) =>
+			String(call.input).endsWith("/api/chat/stream/resume"),
+		),
+		false,
+	);
+	assert.equal(
+		useChatStore.getState().runsByConversationId["conversation-1"]?.status,
+		"awaiting_approval",
+	);
+});
+
 test("selectConversation resumes active run from backend cursor", async () => {
 	const { useChatStore } = await loadStore();
 	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
@@ -179,10 +324,8 @@ test("selectConversation resumes active run from backend cursor", async () => {
 	useChatStore.setState({
 		activeConversationId: undefined,
 		messagesByConversationId: {},
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
+		runsByConversationId: {},
+		controllersByConversationId: {},
 	});
 	globalThis.fetch = async (input, init) => {
 		calls.push({ input, init });
@@ -203,7 +346,7 @@ test("selectConversation resumes active run from backend cursor", async () => {
 					],
 					activeRun: {
 						runId: "run-1",
-						status: "awaiting_approval",
+						status: "running",
 						lastEventId: 42,
 						assistantMessageId: "assistant-1",
 						approvalBatch: null,
@@ -232,12 +375,17 @@ test("selectConversation resumes active run from backend cursor", async () => {
 	};
 
 	await useChatStore.getState().selectConversation("conversation-1");
+	await new Promise((resolve) => setTimeout(resolve, 0));
 
 	const resumeCall = calls.find((call) =>
 		String(call.input).endsWith("/api/chat/stream/resume"),
 	);
 	assert.ok(resumeCall);
-	assert.equal(useChatStore.getState().streamingMessageId, "assistant-1");
+	assert.equal(
+		useChatStore.getState().runsByConversationId["conversation-1"]
+			?.assistantMessageId,
+		"assistant-1",
+	);
 	assert.equal(resumeCall.init?.method, "POST");
 	assert.equal(
 		resumeCall.init?.body,
@@ -275,10 +423,8 @@ test("selectConversation refreshes cached conversation active run before resume"
 				},
 			],
 		},
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
+		runsByConversationId: {},
+		controllersByConversationId: {},
 	});
 	globalThis.fetch = async (input, init) => {
 		calls.push({ input, init });
@@ -319,6 +465,7 @@ test("selectConversation refreshes cached conversation active run before resume"
 	};
 
 	await useChatStore.getState().selectConversation("conversation-1");
+	await new Promise((resolve) => setTimeout(resolve, 0));
 
 	const resumeCall = calls.find((call) =>
 		String(call.input).endsWith("/api/chat/stream/resume"),
@@ -333,6 +480,10 @@ test("selectConversation refreshes cached conversation active run before resume"
 			?.content,
 		"cached",
 	);
+	assert.equal(
+		useChatStore.getState().runsByConversationId["conversation-1"]?.status,
+		"streaming",
+	);
 
 	assert.ok(resolveResume);
 	resolveResume(
@@ -346,9 +497,8 @@ test("selectConversation refreshes cached conversation active run before resume"
 
 test("selectConversation merges active server message parts with local streaming content", async () => {
 	const { useChatStore } = await loadStore();
-	let resolveResume:
-		| ((response: Response | PromiseLike<Response>) => void)
-		| undefined;
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
 	useChatStore.setState({
 		activeConversationId: undefined,
 		messagesByConversationId: {
@@ -363,12 +513,11 @@ test("selectConversation merges active server message parts with local streaming
 				},
 			],
 		},
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
+		runsByConversationId: {},
+		controllersByConversationId: {},
 	});
-	globalThis.fetch = async (input) => {
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
 		const url = String(input);
 
 		if (url.endsWith("/api/conversation/messages/conversation-1")) {
@@ -421,9 +570,7 @@ test("selectConversation merges active server message parts with local streaming
 		}
 
 		if (url.endsWith("/api/chat/stream/resume")) {
-			return new Promise<Response>((resolve) => {
-				resolveResume = resolve;
-			});
+			return new Response("", { status: 500 });
 		}
 
 		return new Response(
@@ -445,14 +592,12 @@ test("selectConversation merges active server message parts with local streaming
 		assert.equal(mergedMessage.timelineParts[0].batch.id, "batch-1");
 	}
 
-	assert.ok(resolveResume);
-	resolveResume(
-		new Response('data: {"type":"done","messageId":"assistant-1"}\n\n', {
-			status: 200,
-			headers: { "Content-Type": "text/event-stream" },
-		}),
+	assert.equal(
+		calls.some((call) =>
+			String(call.input).endsWith("/api/chat/stream/resume"),
+		),
+		false,
 	);
-	await new Promise((resolve) => setTimeout(resolve, 0));
 });
 
 test("selectConversation replaces stale cache when server has no active run", async () => {
@@ -471,10 +616,8 @@ test("selectConversation replaces stale cache when server has no active run", as
 				},
 			],
 		},
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
+		runsByConversationId: {},
+		controllersByConversationId: {},
 	});
 	globalThis.fetch = async () =>
 		new Response(
@@ -616,10 +759,8 @@ test("sendMessage refreshes conversation messages when stream returns 409 confli
 		activeConversationId: "conversation-1",
 		conversations: [conversation("conversation-1", "Local")],
 		messagesByConversationId: { "conversation-1": [] },
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
+		runsByConversationId: {},
+		controllersByConversationId: {},
 	});
 
 	await useChatStore.getState().sendMessage("hello");
@@ -679,10 +820,8 @@ test("stream reducer ignores duplicate SSE event ids in store", async () => {
 		activeConversationId: "conversation-1",
 		conversations: [conversation("conversation-1", "Local")],
 		messagesByConversationId: { "conversation-1": [] },
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
+		runsByConversationId: {},
+		controllersByConversationId: {},
 	});
 
 	await useChatStore.getState().sendMessage("hello");
