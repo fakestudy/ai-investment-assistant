@@ -68,3 +68,46 @@ test("deleteConversation posts backend conversation_id payload", async () => {
 		}),
 	);
 });
+
+test("listMessages returns backend messages envelope with activeRun", async () => {
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		return new Response(
+			JSON.stringify({
+				messages: [
+					{
+						id: "assistant-1",
+						conversationId: "conversation-1",
+						role: "assistant",
+						content: "hello",
+						status: "done",
+						createdAt: "2026-01-01T00:00:00.000Z",
+					},
+				],
+				activeRun: {
+					runId: "run-1",
+					status: "awaiting_approval",
+					lastEventId: 42,
+					assistantMessageId: "assistant-1",
+					approvalBatch: undefined,
+				},
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+	const { listMessages } = await loadApi();
+
+	const response = await listMessages("conversation-1");
+
+	assert.equal(
+		String(calls[0].input),
+		"http://localhost:3000/api/conversation/messages/conversation-1",
+	);
+	assert.equal(response.messages[0]?.id, "assistant-1");
+	assert.equal(response.activeRun?.runId, "run-1");
+});

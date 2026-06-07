@@ -2,6 +2,7 @@ from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from model.approval import ApprovalBatch
 from model.message import Message
 from model.message_part import MessagePart
 
@@ -53,6 +54,9 @@ async def get_messages_by_conversation_id(
             selectinload(Message.timeline_parts).selectinload(
                 MessagePart.tool_invocation
             ),
+            selectinload(Message.timeline_parts)
+            .selectinload(MessagePart.approval_batch)
+            .selectinload(ApprovalBatch.requests),
         )
         .order_by(Message.created_at.asc(), role_order.asc(), Message.id.asc())
     )

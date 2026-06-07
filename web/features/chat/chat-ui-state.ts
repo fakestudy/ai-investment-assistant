@@ -135,6 +135,14 @@ export function upsertToolTimelinePart(
 	);
 }
 
+export function getRenderableTimelineParts(
+	parts: readonly ChatTimelinePart[] | undefined,
+): ChatTimelinePart[] {
+	return [...(parts ?? [])].sort(
+		(first, second) => (first.orderIndex ?? 0) - (second.orderIndex ?? 0),
+	);
+}
+
 export function resolveLoadedConversationMessages<T>({
 	existingMessages,
 	loadedMessages,

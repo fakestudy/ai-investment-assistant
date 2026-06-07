@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db_session
+from schema.chat import ConversationMessagesResponse
 from schema.chat_conversations import (
     ChatConversation,
     DeleteConversationRequest,
@@ -29,7 +30,7 @@ async def get_conversations_list(session: AsyncSession = Depends(get_db_session)
 
 async def get_conversation_messages(
     session: AsyncSession = Depends(get_db_session), *, conversation_id: str
-):
+) -> ConversationMessagesResponse:
     return await get_messages(session=session, conversation_id=conversation_id)
 
 

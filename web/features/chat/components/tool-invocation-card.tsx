@@ -20,9 +20,20 @@ const statusLabels: Record<ToolInvocation["status"], string> = {
 	running: "Running",
 	completed: "Completed",
 	error: "Error",
+	awaiting_approval: "Awaiting Approval",
+	rejected: "Rejected",
+	expired: "Expired",
 };
 
 export function toToolState(status: ToolInvocation["status"]) {
+	if (status === "awaiting_approval") {
+		return "approval-requested" as const;
+	}
+
+	if (status === "rejected" || status === "expired") {
+		return "output-denied" as const;
+	}
+
 	if (status === "running") {
 		return "input-available" as const;
 	}

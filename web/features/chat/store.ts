@@ -12,16 +12,16 @@ import {
 } from "./api";
 import {
 	appendReasoningTimelinePart,
-	getLatestStreamingAssistantMessageId,
-	getResumableStreamingMessageId,
 	resetStreamCreatedMessage,
-	resolveLoadedConversationMessages,
 	upsertToolTimelinePart,
 } from "./chat-ui-state";
 import type {
+	ActiveRunSummary,
+	ApprovalBatch,
 	ChatError,
 	ChatMessage,
 	ChatStreamEvent,
+	ChatTimelinePart,
 	Conversation,
 	ToolInvocation,
 } from "./types";
@@ -122,6 +122,32 @@ const upsertToolInvocation = (
 	);
 };
 
+const upsertApprovalTimelinePart = (
+	parts: ChatMessage["timelineParts"],
+	nextPart: Extract<ChatTimelinePart, { type: "approval" }>,
+) => {
+	const currentParts = parts ?? [];
+	const partIndex = currentParts.findIndex((part) => part.id === nextPart.id);
+
+	if (partIndex === -1) {
+		return [...currentParts, nextPart];
+	}
+
+	return currentParts.map((part, index) =>
+		index === partIndex ? nextPart : part,
+	);
+};
+
+const updateApprovalTimelineBatch = (
+	parts: ChatMessage["timelineParts"],
+	batch: ApprovalBatch,
+) =>
+	parts?.map((part) =>
+		part.type === "approval" && part.batch.id === batch.id
+			? { ...part, batch }
+			: part,
+	);
+
 const updateConversationTitle = (
 	conversations: Conversation[],
 	conversationId: string,
@@ -149,6 +175,69 @@ const appendOptimisticUserMessage = (
 	},
 ];
 
+const mergeTimelinePartsById = (
+	loadedParts: ChatMessage["timelineParts"],
+	existingParts: ChatMessage["timelineParts"],
+) => {
+	if (!loadedParts?.length) {
+		return existingParts;
+	}
+
+	if (!existingParts?.length) {
+		return loadedParts;
+	}
+
+	const loadedPartIds = new Set(loadedParts.map((part) => part.id));
+	return [
+		...loadedParts,
+		...existingParts.filter((part) => !loadedPartIds.has(part.id)),
+	];
+};
+
+const mergeLoadedConversationMessagesById = ({
+	existingMessages,
+	loadedMessages,
+}: {
+	existingMessages: ChatMessage[] | undefined;
+	loadedMessages: ChatMessage[];
+}) => {
+	if (!existingMessages?.length) {
+		return loadedMessages;
+	}
+
+	const loadedMessageIds = new Set(loadedMessages.map((message) => message.id));
+	const existingById = new Map(
+		existingMessages.map((message) => [message.id, message]),
+	);
+
+	return [
+		...loadedMessages.map((loadedMessage) => {
+			const existingMessage = existingById.get(loadedMessage.id);
+
+			if (!existingMessage) {
+				return loadedMessage;
+			}
+
+			return {
+				...loadedMessage,
+				content:
+					existingMessage.status === "streaming"
+						? existingMessage.content
+						: loadedMessage.content,
+				reasoning:
+					existingMessage.status === "streaming"
+						? (existingMessage.reasoning ?? loadedMessage.reasoning)
+						: loadedMessage.reasoning,
+				timelineParts: mergeTimelinePartsById(
+					loadedMessage.timelineParts,
+					existingMessage.timelineParts,
+				),
+			};
+		}),
+		...existingMessages.filter((message) => !loadedMessageIds.has(message.id)),
+	];
+};
+
 const reduceStreamEvent = (
 	state: ChatState,
 	event: ChatStreamEvent,
@@ -161,6 +250,12 @@ const reduceStreamEvent = (
 				event.conversationId,
 				event.title,
 			),
+		};
+	}
+
+	if (event.type === "run_created") {
+		return {
+			streamingMessageId: event.assistantMessageId,
 		};
 	}
 
@@ -273,19 +368,69 @@ const reduceStreamEvent = (
 		};
 	}
 
-	return {
-		isStreaming: false,
-		streamingConversationId: undefined,
-		streamingMessageId: undefined,
-		abortController: undefined,
-		messagesByConversationId: {
-			...state.messagesByConversationId,
-			[conversationId]: updateMessage(messages, event.messageId, (message) => ({
-				...message,
-				status: "done",
-			})),
-		},
-	};
+	if (event.type === "approval_required") {
+		return {
+			messagesByConversationId: {
+				...state.messagesByConversationId,
+				[conversationId]: updateMessage(
+					messages,
+					event.messageId,
+					(message) => ({
+						...message,
+						timelineParts: upsertApprovalTimelinePart(
+							message.timelineParts,
+							event.part,
+						),
+						status: "streaming",
+					}),
+				),
+			},
+		};
+	}
+
+	if (event.type === "approval_resolved") {
+		return {
+			messagesByConversationId: {
+				...state.messagesByConversationId,
+				[conversationId]: messages.map((message) => ({
+					...message,
+					timelineParts: updateApprovalTimelineBatch(
+						message.timelineParts,
+						event.batch,
+					),
+					status:
+						message.timelineParts?.some(
+							(part) =>
+								part.type === "approval" && part.batch.id === event.batch.id,
+						) && message.status !== "done"
+							? "streaming"
+							: message.status,
+				})),
+			},
+		};
+	}
+
+	if (event.type === "done") {
+		return {
+			isStreaming: false,
+			streamingConversationId: undefined,
+			streamingMessageId: undefined,
+			abortController: undefined,
+			messagesByConversationId: {
+				...state.messagesByConversationId,
+				[conversationId]: updateMessage(
+					messages,
+					event.messageId,
+					(message) => ({
+						...message,
+						status: "done",
+					}),
+				),
+			},
+		};
+	}
+
+	return {};
 };
 
 type StartStreamInput = {
@@ -364,29 +509,36 @@ const startStream = async (
 	}
 };
 
-const resumeStreamingMessage = (
+const resumeActiveRun = (
 	conversationId: string,
-	messages: ChatMessage[],
+	activeRun: ActiveRunSummary | null | undefined,
 	set: (
 		partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
 	) => void,
 	get: () => ChatState,
 ) => {
-	const messageId = getLatestStreamingAssistantMessageId(messages);
-	if (!messageId) {
-		return;
+	if (!activeRun) {
+		return false;
 	}
 
 	void startStream(
 		{
 			conversationId,
-			initialMessageId: messageId,
+			initialMessageId: activeRun.assistantMessageId,
 			connect: (signal, onEvent) =>
-				resumeChatStream(messageId, { signal, onEvent }),
+				resumeChatStream(
+					{
+						runId: activeRun.runId,
+						afterEventId: activeRun.lastEventId ?? 0,
+					},
+					{ signal, onEvent },
+				),
 		},
 		set,
 		get,
 	);
+
+	return true;
 };
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -456,35 +608,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	selectConversation: async (conversationId) => {
 		set({ activeConversationId: conversationId, error: undefined });
 
-		const cachedMessages = get().messagesByConversationId[conversationId];
-		if (cachedMessages) {
-			const resumableMessageId = getResumableStreamingMessageId({
-				messages: cachedMessages,
-				isStreaming: get().isStreaming,
-				streamingMessageId: get().streamingMessageId,
-			});
-			if (resumableMessageId) {
-				resumeStreamingMessage(conversationId, cachedMessages, set, get);
-			}
-			return;
-		}
-
 		set({ isLoadingMessages: true });
 
 		try {
-			const messages = await listMessages(conversationId);
+			const { activeRun, messages } = await listMessages(conversationId);
 
 			set((state) => ({
 				messagesByConversationId: {
 					...state.messagesByConversationId,
-					[conversationId]: resolveLoadedConversationMessages({
-						existingMessages: state.messagesByConversationId[conversationId],
-						loadedMessages: messages,
-					}),
+					[conversationId]: activeRun
+						? mergeLoadedConversationMessagesById({
+								existingMessages:
+									state.messagesByConversationId[conversationId],
+								loadedMessages: messages,
+							})
+						: messages,
 				},
 				isLoadingMessages: false,
 			}));
-			resumeStreamingMessage(conversationId, messages, set, get);
+			resumeActiveRun(conversationId, activeRun, set, get);
 		} catch (error) {
 			set({
 				isLoadingMessages: false,

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	appendReasoningTimelinePart,
 	getLatestStreamingAssistantMessageId,
+	getRenderableTimelineParts,
 	getResumableStreamingMessageId,
 	getVisibleMessageWindow,
 	isActiveConversationStreaming,
@@ -234,5 +235,43 @@ test("upsertToolTimelinePart updates tool result without moving the original eve
 	if (parts[1].type === "tool") {
 		assert.deepEqual(parts[1].invocation.result, { summary: "2 results" });
 		assert.equal(parts[1].invocation.status, "completed");
+	}
+});
+
+test("getRenderableTimelineParts keeps approval parts distinct from tool parts", () => {
+	const parts = getRenderableTimelineParts([
+		{
+			id: "approval-part-1",
+			type: "approval" as const,
+			orderIndex: 2,
+			batch: {
+				id: "batch-1",
+				status: "pending" as const,
+				expiresAt: "2026-01-01T00:30:00.000Z",
+				requests: [
+					{
+						id: "request-1",
+						toolInvocationId: "tool-1",
+						toolName: "get_weather",
+						args: { city: "Beijing" },
+						decision: "pending" as const,
+					},
+				],
+			},
+		},
+		{
+			id: "reasoning-1",
+			type: "reasoning" as const,
+			orderIndex: 1,
+			text: "Check weather.",
+		},
+	]);
+
+	assert.deepEqual(
+		parts.map((part) => part.type),
+		["reasoning", "approval"],
+	);
+	if (parts[1]?.type === "approval") {
+		assert.equal(parts[1].batch.requests[0]?.toolName, "get_weather");
 	}
 });

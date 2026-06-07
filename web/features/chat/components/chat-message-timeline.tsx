@@ -1,6 +1,13 @@
 "use client";
 
-import { BrainIcon, ListTreeIcon, WrenchIcon } from "lucide-react";
+import {
+	BrainIcon,
+	CheckCircleIcon,
+	ListTreeIcon,
+	ShieldIcon,
+	WrenchIcon,
+	XCircleIcon,
+} from "lucide-react";
 import { useCallback } from "react";
 import { useStickToBottomContext } from "use-stick-to-bottom";
 import { ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought";
@@ -10,6 +17,7 @@ import {
 	ReasoningTrigger,
 	useReasoning,
 } from "@/components/ai-elements/reasoning";
+import { getRenderableTimelineParts } from "../chat-ui-state";
 import type { ChatMessage, ChatTimelinePart } from "../types";
 import { shouldReleaseChatStickinessForReasoningToggle } from "./chat-reasoning-scroll-state";
 import { ToolInvocationCard } from "./tool-invocation-card";
@@ -21,9 +29,7 @@ type ChatMessageTimelineProps = {
 
 function getTimelineParts(message: ChatMessage): ChatTimelinePart[] {
 	if (message.timelineParts?.length) {
-		return [...message.timelineParts].sort(
-			(first, second) => (first.orderIndex ?? 0) - (second.orderIndex ?? 0),
-		);
+		return getRenderableTimelineParts(message.timelineParts);
 	}
 
 	const parts: ChatTimelinePart[] = [];
@@ -44,6 +50,29 @@ function getTimelineParts(message: ChatMessage): ChatTimelinePart[] {
 	}
 
 	return parts;
+}
+
+function getApprovalTimelineLabel(
+	part: Extract<ChatTimelinePart, { type: "approval" }>,
+) {
+	const requestedTools = part.batch.requests
+		.map((request) => request.toolName)
+		.join(", ");
+	const status =
+		part.batch.status === "pending"
+			? "Awaiting approval"
+			: part.batch.status === "expired"
+				? "Approval expired"
+				: "Approval resolved";
+
+	return (
+		<div className="space-y-1">
+			<p className="font-medium text-foreground">{status}</p>
+			{requestedTools ? (
+				<p className="text-muted-foreground">Tools: {requestedTools}</p>
+			) : null}
+		</div>
+	);
 }
 
 export function hasTimelineDetails(message: ChatMessage) {
@@ -79,6 +108,18 @@ export function ChatMessageTimeline({
 										{part.text}
 									</p>
 								}
+							/>
+						) : part.type === "approval" ? (
+							<ChainOfThoughtStep
+								icon={
+									part.batch.status === "pending"
+										? ShieldIcon
+										: part.batch.status === "expired"
+											? XCircleIcon
+											: CheckCircleIcon
+								}
+								key={part.id}
+								label={getApprovalTimelineLabel(part)}
 							/>
 						) : (
 							<ChainOfThoughtStep

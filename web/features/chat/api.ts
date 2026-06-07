@@ -1,7 +1,9 @@
 import type {
 	ChatMessage,
 	ChatStreamEvent,
+	ChatStreamResumeRequest,
 	Conversation,
+	ConversationMessagesResponse,
 	StreamChatRequest,
 } from "./types";
 
@@ -90,8 +92,10 @@ export async function deleteConversation(
 	});
 }
 
-export function listMessages(conversationId: string): Promise<ChatMessage[]> {
-	return requestJson<ChatMessage[]>(
+export function listMessages(
+	conversationId: string,
+): Promise<ConversationMessagesResponse> {
+	return requestJson<ConversationMessagesResponse>(
 		`/api/conversation/messages/${encodeURIComponent(conversationId)}`,
 	);
 }
@@ -194,20 +198,18 @@ export async function streamChat(
 }
 
 export async function resumeChatStream(
-	messageId: string,
+	request: ChatStreamResumeRequest,
 	options: {
 		signal: AbortSignal;
 		onEvent: (event: ChatStreamEvent) => void;
 	},
 ): Promise<void> {
-	const response = await fetch(
-		buildApiUrl(`/api/chat/streams/${encodeURIComponent(messageId)}`),
-		{
-			method: "GET",
-			headers: jsonHeaders(),
-			signal: options.signal,
-		},
-	);
+	const response = await fetch(buildApiUrl("/api/chat/stream/resume"), {
+		method: "POST",
+		headers: jsonHeaders(),
+		body: JSON.stringify(request),
+		signal: options.signal,
+	});
 
 	if (!response.ok) {
 		throw new Error(`Request failed with status ${response.status}`);
