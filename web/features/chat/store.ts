@@ -10,10 +10,13 @@ import {
 	renameConversation,
 	resumeChatStream,
 	streamChat,
+	submitApprovalDecisions,
 } from "./api";
 import { reduceChatStreamEvent } from "./chat-event-reducer";
+import type { ApprovalSelections } from "./components/approval-card-state";
 import type {
 	ActiveRunSummary,
+	ApprovalBatch,
 	ChatError,
 	ChatMessage,
 	ChatStreamEvent,
@@ -45,6 +48,10 @@ type ChatState = {
 		nextConversationId?: string;
 	}>;
 	sendMessage: (content: string) => Promise<string | undefined>;
+	submitApproval: (
+		batchId: string,
+		selections: ApprovalSelections,
+	) => Promise<void>;
 	stopStreaming: () => void;
 	regenerateLastAssistantMessage: () => Promise<void>;
 	editUserMessageAndRegenerate: (
@@ -211,6 +218,51 @@ const withoutRecordKey = <T>(
 ): Record<string, T | undefined> => {
 	const { [key]: _removed, ...rest } = record;
 	return rest;
+};
+
+const findApprovalBatchInMessages = (
+	messages: ChatMessage[],
+	batchId: string,
+): ApprovalBatch | undefined => {
+	for (const message of messages) {
+		const batch = message.timelineParts?.find(
+			(part) => part.type === "approval" && part.batch.id === batchId,
+		);
+
+		if (batch?.type === "approval") {
+			return batch.batch;
+		}
+	}
+
+	return undefined;
+};
+
+const findConversationForApprovalBatch = (
+	state: ChatState,
+	batchId: string,
+) => {
+	for (const [conversationId, run] of Object.entries(
+		state.runsByConversationId,
+	)) {
+		if (run?.approvalBatch?.id === batchId) {
+			return { conversationId, batch: run.approvalBatch, run };
+		}
+	}
+
+	for (const [conversationId, messages] of Object.entries(
+		state.messagesByConversationId,
+	)) {
+		const batch = findApprovalBatchInMessages(messages, batchId);
+		if (batch) {
+			return {
+				conversationId,
+				batch,
+				run: state.runsByConversationId[conversationId],
+			};
+		}
+	}
+
+	return undefined;
 };
 
 type StartStreamInput = {
@@ -605,6 +657,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			get,
 		);
 		return conversationId;
+	},
+
+	submitApproval: async (batchId, selections) => {
+		const approval = findConversationForApprovalBatch(get(), batchId);
+
+		if (!approval) {
+			set({
+				error: {
+					message: "Approval request is no longer available",
+					scope: "stream",
+				},
+			});
+			return;
+		}
+
+		const { batch, conversationId, run } = approval;
+		const decisions = batch.requests.map((request) => ({
+			approvalRequestId: request.id,
+			decision: selections[request.id],
+		}));
+
+		if (
+			decisions.some(
+				(decision) =>
+					decision.decision !== "approve" && decision.decision !== "reject",
+			)
+		) {
+			set({
+				error: {
+					message: "Please approve or reject every tool request",
+					scope: "stream",
+				},
+			});
+			return;
+		}
+
+		await startStream(
+			{
+				conversationId,
+				initialMessageId: run?.assistantMessageId,
+				connect: (signal, onEvent) =>
+					submitApprovalDecisions(
+						batchId,
+						{
+							decisions: decisions as Array<{
+								approvalRequestId: string;
+								decision: "approve" | "reject";
+							}>,
+							afterEventId: run?.lastEventId ?? 0,
+						},
+						{ signal, onEvent },
+					),
+			},
+			set,
+			get,
+		);
 	},
 
 	stopStreaming: () => {

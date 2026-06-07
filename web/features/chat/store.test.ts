@@ -831,3 +831,214 @@ test("stream reducer ignores duplicate SSE event ids in store", async () => {
 		useChatStore.getState().messagesByConversationId["conversation-1"]?.[1];
 	assert.equal(assistant?.content, "hello");
 });
+
+test("submitApproval posts selections from run cursor and resumes stream", async () => {
+	const { useChatStore } = await loadStore();
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		const url = String(input);
+
+		if (url.endsWith("/api/chat/approval/decisions/batch-1")) {
+			return new Response(
+				[
+					'id: 43\ndata: {"type":"approval_resolved","runId":"run-1","batch":{"id":"batch-1","status":"resolved","expiresAt":"2026-06-07T12:30:00.000Z","resolutionSource":"manual","resolvedAt":"2026-06-07T12:02:00.000Z","requests":[{"id":"request-1","toolInvocationId":"tool-1","toolName":"get_weather","args":{"city":"Beijing"},"decision":"approved","decidedAt":"2026-06-07T12:02:00.000Z"}]}}',
+					'id: 44\ndata: {"type":"done","runId":"run-1","messageId":"assistant-1"}',
+					"",
+				].join("\n\n"),
+				{
+					status: 200,
+					headers: { "Content-Type": "text/event-stream" },
+				},
+			);
+		}
+
+		return new Response(
+			JSON.stringify([conversation("conversation-1", "Synced")]),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	useChatStore.setState({
+		activeConversationId: "conversation-1",
+		conversations: [conversation("conversation-1", "Local")],
+		messagesByConversationId: {
+			"conversation-1": [
+				{
+					id: "assistant-1",
+					conversationId: "conversation-1",
+					role: "assistant",
+					content: "",
+					status: "streaming",
+					createdAt: "2026-06-07T12:00:00.000Z",
+					timelineParts: [
+						{
+							id: "approval-part-1",
+							type: "approval",
+							batch: {
+								id: "batch-1",
+								status: "pending",
+								expiresAt: "2026-06-07T12:30:00.000Z",
+								requests: [
+									{
+										id: "request-1",
+										toolInvocationId: "tool-1",
+										toolName: "get_weather",
+										args: { city: "Beijing" },
+										decision: "pending",
+									},
+								],
+							},
+						},
+					],
+				},
+			],
+		},
+		runsByConversationId: {
+			"conversation-1": {
+				runId: "run-1",
+				assistantMessageId: "assistant-1",
+				status: "awaiting_approval",
+				lastEventId: 42,
+			},
+		},
+		controllersByConversationId: {},
+	});
+
+	await useChatStore
+		.getState()
+		.submitApproval("batch-1", { "request-1": "approve" });
+
+	const approvalCall = calls.find((call) =>
+		String(call.input).endsWith("/api/chat/approval/decisions/batch-1"),
+	);
+	assert.ok(approvalCall);
+	assert.equal(approvalCall.init?.method, "POST");
+	assert.equal(
+		approvalCall.init?.body,
+		JSON.stringify({
+			decisions: [{ approvalRequestId: "request-1", decision: "approve" }],
+			afterEventId: 42,
+		}),
+	);
+	assert.equal(
+		useChatStore.getState().runsByConversationId["conversation-1"],
+		undefined,
+	);
+	const approvalPart =
+		useChatStore.getState().messagesByConversationId["conversation-1"]?.[0]
+			?.timelineParts?.[0];
+	assert.equal(approvalPart?.type, "approval");
+	if (approvalPart?.type === "approval") {
+		assert.equal(approvalPart.batch.status, "resolved");
+		assert.equal(approvalPart.batch.requests[0]?.decision, "approved");
+	}
+});
+
+test("submitApproval refreshes selected conversation when backend returns conflict", async () => {
+	const { useChatStore } = await loadStore();
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		const url = String(input);
+
+		if (url.endsWith("/api/chat/approval/decisions/batch-1")) {
+			return new Response("conflict", { status: 409 });
+		}
+
+		if (url.endsWith("/api/conversation/messages/conversation-1")) {
+			return new Response(
+				JSON.stringify({
+					messages: [
+						{
+							id: "assistant-fresh",
+							conversationId: "conversation-1",
+							role: "assistant",
+							content: "fresh after conflict",
+							status: "done",
+							createdAt: "2026-06-07T12:01:00.000Z",
+						},
+					],
+					activeRun: null,
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+
+		return new Response(
+			JSON.stringify([conversation("conversation-1", "Synced")]),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	useChatStore.setState({
+		activeConversationId: "conversation-1",
+		conversations: [conversation("conversation-1", "Local")],
+		messagesByConversationId: {
+			"conversation-1": [
+				{
+					id: "assistant-1",
+					conversationId: "conversation-1",
+					role: "assistant",
+					content: "",
+					status: "streaming",
+					createdAt: "2026-06-07T12:00:00.000Z",
+					timelineParts: [
+						{
+							id: "approval-part-1",
+							type: "approval",
+							batch: {
+								id: "batch-1",
+								status: "pending",
+								expiresAt: "2026-06-07T12:30:00.000Z",
+								requests: [
+									{
+										id: "request-1",
+										toolInvocationId: "tool-1",
+										toolName: "get_weather",
+										args: { city: "Beijing" },
+										decision: "pending",
+									},
+								],
+							},
+						},
+					],
+				},
+			],
+		},
+		runsByConversationId: {
+			"conversation-1": {
+				runId: "run-1",
+				assistantMessageId: "assistant-1",
+				status: "awaiting_approval",
+				lastEventId: 42,
+			},
+		},
+		controllersByConversationId: {},
+	});
+
+	await useChatStore
+		.getState()
+		.submitApproval("batch-1", { "request-1": "approve" });
+
+	assert.ok(
+		calls.some((call) =>
+			String(call.input).endsWith("/api/conversation/messages/conversation-1"),
+		),
+	);
+	assert.equal(
+		useChatStore.getState().messagesByConversationId["conversation-1"]?.[0]?.id,
+		"assistant-fresh",
+	);
+});

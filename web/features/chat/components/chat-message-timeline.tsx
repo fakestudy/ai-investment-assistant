@@ -19,6 +19,7 @@ import {
 } from "@/components/ai-elements/reasoning";
 import { getRenderableTimelineParts } from "../chat-ui-state";
 import type { ChatMessage, ChatTimelinePart } from "../types";
+import { ApprovalCard } from "./approval-card";
 import { shouldReleaseChatStickinessForReasoningToggle } from "./chat-reasoning-scroll-state";
 import { ToolInvocationCard } from "./tool-invocation-card";
 
@@ -120,7 +121,12 @@ export function ChatMessageTimeline({
 								}
 								key={part.id}
 								label={getApprovalTimelineLabel(part)}
-							/>
+							>
+								<ApprovalCard
+									batch={part.batch}
+									conversationId={message.conversationId}
+								/>
+							</ChainOfThoughtStep>
 						) : (
 							<ChainOfThoughtStep
 								icon={WrenchIcon}

@@ -9,7 +9,10 @@ import {
 	ToolOutput,
 } from "@/components/ai-elements/tool";
 import type { ToolInvocation } from "../types";
-import { getToolInvocationCardOpenState } from "./tool-invocation-card-state";
+import {
+	getToolInvocationCardOpenState,
+	getToolInvocationStatusSummary,
+} from "./tool-invocation-card-state";
 
 type ToolInvocationCardProps = {
 	hideHeaderIcon?: boolean;
@@ -87,7 +90,9 @@ export function ToolInvocationCard({
 	const hasError = invocation.status === "error" && Boolean(invocation.error);
 	const resultSummary = hasError
 		? invocation.error
-		: summarizeResult(invocation.result);
+		: invocation.result === undefined
+			? getToolInvocationStatusSummary(invocation.status)
+			: summarizeResult(invocation.result);
 	const [isOpen, setIsOpen] = useState(() =>
 		getToolInvocationCardOpenState(invocation.status),
 	);
