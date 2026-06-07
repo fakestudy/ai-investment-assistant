@@ -224,6 +224,58 @@ test("selectConversation unwraps backend messages envelope", async () => {
 	});
 });
 
+test("selectConversation skips loading when conversation is already active", async () => {
+	const { useChatStore } = await loadStore();
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	const localMessages = [
+		{
+			id: "assistant-local",
+			conversationId: "conversation-1",
+			role: "assistant" as const,
+			content: "local",
+			status: "done" as const,
+			createdAt: "2026-01-01T00:00:00.000Z",
+		},
+	];
+	useChatStore.setState({
+		activeConversationId: "conversation-1",
+		messagesByConversationId: {
+			"conversation-1": localMessages,
+		},
+	});
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		return new Response(
+			JSON.stringify({
+				messages: [
+					{
+						id: "assistant-remote",
+						conversationId: "conversation-1",
+						role: "assistant",
+						content: "remote",
+						status: "done",
+						createdAt: "2026-01-01T00:00:00.000Z",
+					},
+				],
+				activeRun: null,
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	await useChatStore.getState().selectConversation("conversation-1");
+
+	assert.equal(calls.length, 0);
+	assert.deepEqual(
+		useChatStore.getState().messagesByConversationId["conversation-1"],
+		localMessages,
+	);
+});
+
 test("selectConversation restores awaiting approval without resume request", async () => {
 	const { useChatStore } = await loadStore();
 	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =

@@ -131,6 +131,24 @@ async def create_chat_run(
                 "assistantMessageId": assistant_message_id,
             },
         )
+        await append_run_event(
+            session,
+            run_id,
+            "message_created",
+            {
+                "type": "message_created",
+                "message": {
+                    "id": assistant_message.id,
+                    "conversationId": assistant_message.conversation_id,
+                    "role": assistant_message.role,
+                    "content": assistant_message.content,
+                    "status": assistant_message.status,
+                    "createdAt": assistant_message.created_at.astimezone(UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                },
+            },
+        )
     except IntegrityError as exc:
         if "uq_agent_runs_active_conversation" in str(exc.orig):
             raise ConversationRunConflict(request.conversation_id) from exc

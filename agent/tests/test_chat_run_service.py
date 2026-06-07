@@ -40,8 +40,8 @@ class ChatRunServiceTest(unittest.TestCase):
     def test_outbox_failure_rolls_back_messages_and_run(self) -> None:
         asyncio.run(self._test_outbox_failure_rolls_back_messages_and_run())
 
-    def test_create_run_persists_and_streams_run_created_event(self) -> None:
-        asyncio.run(self._test_create_run_persists_and_streams_run_created_event())
+    def test_create_run_persists_and_streams_initial_run_events(self) -> None:
+        asyncio.run(self._test_create_run_persists_and_streams_initial_run_events())
 
     def test_create_run_includes_generate_title_in_start_outbox_payload(self) -> None:
         asyncio.run(
@@ -158,7 +158,7 @@ class ChatRunServiceTest(unittest.TestCase):
         )
         await self._reset_conversation(conversation_id)
 
-    async def _test_create_run_persists_and_streams_run_created_event(self) -> None:
+    async def _test_create_run_persists_and_streams_initial_run_events(self) -> None:
         conversation_id = "conversation-chat-run-created-event"
         await self._reset_conversation(conversation_id)
         now = datetime(2026, 6, 6, 12, 0, tzinfo=UTC)
@@ -192,16 +192,19 @@ class ChatRunServiceTest(unittest.TestCase):
             await session.commit()
 
         async with AsyncSessionLocal() as session:
-            event = (
+            events = (
                 await session.execute(
-                    select(AgentRunEvent).where(
-                        AgentRunEvent.agent_run_id == result.run.id
-                    )
+                    select(AgentRunEvent)
+                    .where(AgentRunEvent.agent_run_id == result.run.id)
+                    .order_by(AgentRunEvent.id)
                 )
-            ).scalar_one()
-            self.assertEqual(event.event_type, "run_created")
+            ).scalars().all()
             self.assertEqual(
-                event.payload,
+                [event.event_type for event in events],
+                ["run_created", "message_created"],
+            )
+            self.assertEqual(
+                events[0].payload,
                 {
                     "type": "run_created",
                     "runId": result.run.id,
@@ -209,16 +212,34 @@ class ChatRunServiceTest(unittest.TestCase):
                     "assistantMessageId": result.run.assistant_message_id,
                 },
             )
+            self.assertEqual(
+                events[1].payload,
+                {
+                    "type": "message_created",
+                    "runId": result.run.id,
+                    "message": {
+                        "id": result.run.assistant_message_id,
+                        "conversationId": conversation_id,
+                        "role": "assistant",
+                        "content": "",
+                        "status": "streaming",
+                        "createdAt": "2026-06-06T12:00:00Z",
+                    },
+                },
+            )
 
         frames = [
             frame
             async for frame in stream_run_events(result.run.id, after_event_id=0)
         ]
-        self.assertEqual(len(frames), 1)
+        self.assertEqual(len(frames), 2)
         self.assertTrue(frames[0].startswith("id: "))
         self.assertIn('"type":"run_created"', frames[0])
         self.assertIn('"runId":"run-created-event"', frames[0])
         self.assertIn('"assistantMessageId":"assistant-message-run-created-event"', frames[0])
+        self.assertIn('"type":"message_created"', frames[1])
+        self.assertIn('"id":"assistant-message-run-created-event"', frames[1])
+        self.assertIn('"conversationId":"conversation-chat-run-created-event"', frames[1])
 
         await self._reset_conversation(conversation_id)
 

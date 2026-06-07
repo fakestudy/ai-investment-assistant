@@ -29,6 +29,10 @@ type LoadConversationsOptions = {
 	force?: boolean;
 };
 
+type SelectConversationOptions = {
+	force?: boolean;
+};
+
 type ChatState = {
 	conversations: Conversation[];
 	activeConversationId?: string;
@@ -41,7 +45,10 @@ type ChatState = {
 	loadConversations: (options?: LoadConversationsOptions) => Promise<void>;
 	createNewConversation: () => Promise<void>;
 	clearActiveConversation: () => void;
-	selectConversation: (conversationId: string) => Promise<void>;
+	selectConversation: (
+		conversationId: string,
+		options?: SelectConversationOptions,
+	) => Promise<void>;
 	renameActiveConversation: (title: string) => Promise<void>;
 	deleteActiveConversation: () => Promise<{
 		deleted: boolean;
@@ -340,7 +347,7 @@ const startStream = async (
 	} catch (error) {
 		if (!abortController.signal.aborted) {
 			if (error instanceof ChatApiError && error.status === 409) {
-				await get().selectConversation(input.conversationId);
+				await get().selectConversation(input.conversationId, { force: true });
 				return;
 			}
 
@@ -485,7 +492,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		});
 	},
 
-	selectConversation: async (conversationId) => {
+	selectConversation: async (conversationId, options) => {
+		if (!options?.force && get().activeConversationId === conversationId) {
+			return;
+		}
+
 		set({ activeConversationId: conversationId, error: undefined });
 
 		set({ isLoadingMessages: true });
@@ -590,7 +601,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			const nextConversationId = get().activeConversationId;
 
 			if (nextConversationId) {
-				await get().selectConversation(nextConversationId);
+				await get().selectConversation(nextConversationId, { force: true });
 			}
 
 			return { deleted: true, nextConversationId };

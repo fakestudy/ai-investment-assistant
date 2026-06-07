@@ -599,6 +599,7 @@ async def project_stream_to_database(
             after_commit=after_commit,
         )
     except Exception as exc:
+        error = exc
         await _project_and_commit(
             session_factory=session_factory,
             run=run,
@@ -606,7 +607,7 @@ async def project_stream_to_database(
                 projection,
                 attached_run,
                 session,
-                exc,
+                error,
             ),
             after_commit=after_commit,
         )
