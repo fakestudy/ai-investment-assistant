@@ -12,7 +12,7 @@ from repository.agent_session import (
     get_agent_session_by_conversation_id,
     upsert_agent_session,
 )
-from repository.conversation import get_conversation_by_id
+from repository.conversation import update_conversation_title
 from repository.message import create_message, update_message
 from repository.message_part import create_message_part, update_message_part_text
 from repository.tool_invocation import create_tool_invocation, update_tool_invocation
@@ -30,6 +30,22 @@ from schema.chat import (
 )
 from service.runtime import stream_query
 from service.session_store import PostgresSessionStore
+
+
+class _StreamState:
+    def __init__(self, assistant_message_id: str) -> None:
+        self.assistant_message_id = assistant_message_id
+        self.content = ""
+        self.reasoning = ""
+        self.current_reasoning_part_text = ""
+        self.has_partial_text = False
+        self.has_partial_thinking = False
+        self.next_order_index = 0
+        self.reasoning_part_id: str | None = None
+        self.tool_invocation_started_at: dict[str, datetime] = {}
+        self.projected_tool_ids: set[str] = set()
+        self.pending_tools: dict[str, dict[str, Any]] = {}
+        self.tool_block_keys_by_index: dict[int, str] = {}
 
 
 async def stream_chat(
@@ -79,14 +95,7 @@ async def stream_chat(
         )
     )
 
-    content = ""
-    reasoning = ""
-    current_reasoning_part_text = ""
-    has_partial_text = False
-    has_partial_thinking = False
-    next_order_index = 0
-    reasoning_part_id: str | None = None
-    tool_invocation_started_at: dict[str, datetime] = {}
+    stream_state = _StreamState(assistant_message_id)
     sdk_session_id = getattr(existing_agent_session, "sdk_session_id", None)
     session_store = PostgresSessionStore(AsyncSessionLocal)
 
@@ -105,19 +114,22 @@ async def stream_chat(
 
             thinking_deltas = (
                 _extract_thinking_deltas(sdk_message)
-                if is_partial_delta or not has_partial_thinking
+                if is_partial_delta or not stream_state.has_partial_thinking
                 else []
             )
             if is_partial_delta and thinking_deltas:
-                has_partial_thinking = True
+                stream_state.has_partial_thinking = True
             for text in thinking_deltas:
-                reasoning += text
-                current_reasoning_part_text += text
-                reasoning_part_id, next_order_index = await _persist_reasoning_delta(
+                stream_state.reasoning += text
+                stream_state.current_reasoning_part_text += text
+                (
+                    stream_state.reasoning_part_id,
+                    stream_state.next_order_index,
+                ) = await _persist_reasoning_delta(
                     message_id=assistant_message_id,
-                    part_id=reasoning_part_id,
-                    text=current_reasoning_part_text,
-                    order_index=next_order_index,
+                    part_id=stream_state.reasoning_part_id,
+                    text=stream_state.current_reasoning_part_text,
+                    order_index=stream_state.next_order_index,
                 )
                 yield _to_sse(
                     ReasoningEvent(
@@ -127,18 +139,40 @@ async def stream_chat(
                     )
                 )
 
+            _record_tool_json_delta(
+                sdk_message,
+                pending_tools=stream_state.pending_tools,
+                tool_block_keys_by_index=stream_state.tool_block_keys_by_index,
+            )
+
             tool_call = _extract_tool_call(sdk_message)
             if tool_call is not None:
-                invocation, next_order_index = await _persist_tool_call(
-                    message_id=assistant_message_id,
-                    tool_id=tool_call["id"],
-                    tool_name=tool_call["name"],
-                    args=tool_call["args"],
-                    order_index=next_order_index,
+                _record_tool_call(
+                    sdk_message,
+                    tool_call=tool_call,
+                    pending_tools=stream_state.pending_tools,
+                    tool_block_keys_by_index=stream_state.tool_block_keys_by_index,
                 )
-                reasoning_part_id = None
-                current_reasoning_part_text = ""
-                tool_invocation_started_at[invocation.id] = datetime.now(UTC)
+
+            ready_tool_call = _pop_ready_tool_call(
+                sdk_message,
+                tool_call=tool_call,
+                pending_tools=stream_state.pending_tools,
+                projected_tool_ids=stream_state.projected_tool_ids,
+                tool_block_keys_by_index=stream_state.tool_block_keys_by_index,
+            )
+            if ready_tool_call is not None:
+                invocation, stream_state.next_order_index = await _persist_tool_call(
+                    message_id=assistant_message_id,
+                    tool_id=ready_tool_call["id"],
+                    tool_name=ready_tool_call["name"],
+                    args=ready_tool_call["args"],
+                    order_index=stream_state.next_order_index,
+                )
+                stream_state.reasoning_part_id = None
+                stream_state.current_reasoning_part_text = ""
+                stream_state.projected_tool_ids.add(invocation.id)
+                stream_state.tool_invocation_started_at[invocation.id] = datetime.now(UTC)
                 yield _to_sse(
                     ToolCallEvent(
                         type="tool_call",
@@ -149,14 +183,19 @@ async def stream_chat(
 
             tool_result = _extract_tool_result(sdk_message)
             if tool_result is not None:
-                started_at = tool_invocation_started_at.get(tool_result["id"])
+                started_at = stream_state.tool_invocation_started_at.get(tool_result["id"])
                 latency_ms = _calculate_latency_ms(started_at, datetime.now(UTC))
                 invocation = await _persist_tool_result(
+                    message_id=assistant_message_id,
                     tool_id=tool_result["id"],
                     result=tool_result["result"],
                     error=tool_result["error"],
                     latency_ms=latency_ms,
+                    order_index=stream_state.next_order_index,
                 )
+                if invocation.id not in stream_state.projected_tool_ids:
+                    stream_state.projected_tool_ids.add(invocation.id)
+                    stream_state.next_order_index += 1
                 yield _to_sse(
                     ToolResultEvent(
                         type="tool_result",
@@ -164,18 +203,18 @@ async def stream_chat(
                         invocation=_project_tool_invocation(invocation),
                     )
                 )
-                reasoning_part_id = None
-                current_reasoning_part_text = ""
+                stream_state.reasoning_part_id = None
+                stream_state.current_reasoning_part_text = ""
 
             text_deltas = (
                 _extract_text_deltas(sdk_message)
-                if is_partial_delta or not has_partial_text
+                if is_partial_delta or not stream_state.has_partial_text
                 else []
             )
             if is_partial_delta and text_deltas:
-                has_partial_text = True
+                stream_state.has_partial_text = True
             for text in text_deltas:
-                content += text
+                stream_state.content += text
                 yield _to_sse(
                     DeltaEvent(
                         type="delta",
@@ -188,8 +227,8 @@ async def stream_chat(
             await update_message(
                 session,
                 message_id=assistant_message_id,
-                content=content,
-                reasoning=reasoning,
+                content=stream_state.content,
+                reasoning=stream_state.reasoning,
                 status="done",
             )
             if sdk_session_id:
@@ -226,8 +265,8 @@ async def stream_chat(
             await update_message(
                 session,
                 message_id=assistant_message_id,
-                content=content,
-                reasoning=reasoning,
+                content=stream_state.content,
+                reasoning=stream_state.reasoning,
                 status="error",
             )
             if sdk_session_id:
@@ -318,31 +357,63 @@ async def _persist_tool_call(
 
 async def _persist_tool_result(
     *,
+    message_id: str,
     tool_id: str,
     result: Any | None,
     error: str | None,
     latency_ms: int | None,
+    order_index: int,
 ) -> ToolInvocation:
     async with AsyncSessionLocal() as session:
-        invocation = await update_tool_invocation(
-            session,
-            invocation_id=tool_id,
-            result=result,
-            error=error,
-            latency_ms=latency_ms,
-            status="error" if error else "completed",
-        )
+        try:
+            invocation = await update_tool_invocation(
+                session,
+                invocation_id=tool_id,
+                result=result,
+                error=error,
+                latency_ms=latency_ms,
+                status="error" if error else "completed",
+            )
+        except LookupError:
+            invocation = await create_tool_invocation(
+                session,
+                ToolInvocation(
+                    id=tool_id,
+                    message_id=message_id,
+                    tool_name="unknown",
+                    args={},
+                    result=result,
+                    error=error,
+                    latency_ms=latency_ms,
+                    status="error" if error else "completed",
+                    created_at=datetime.now(UTC),
+                ),
+            )
+            await create_message_part(
+                session,
+                MessagePart(
+                    id=str(uuid4()),
+                    message_id=message_id,
+                    type="tool",
+                    order_index=order_index,
+                    text="",
+                    tool_invocation_id=tool_id,
+                    created_at=datetime.now(UTC),
+                ),
+            )
         await session.commit()
     return invocation
 
 
 async def _persist_title(*, conversation_id: str, title: str) -> bool:
     async with AsyncSessionLocal() as session:
-        conversation = await get_conversation_by_id(session, conversation_id)
+        conversation = await update_conversation_title(
+            session,
+            conversation_id=conversation_id,
+            title=title,
+        )
         if conversation is None:
             return False
-        conversation.title = title
-        await session.flush()
         await session.commit()
     return True
 
@@ -390,6 +461,143 @@ def _extract_session_id(sdk_message: Any) -> str | None:
 def _is_content_block_delta_event(sdk_message: Any) -> bool:
     event = getattr(sdk_message, "event", None)
     return isinstance(event, dict) and event.get("type") == "content_block_delta"
+
+
+def _record_tool_call(
+    sdk_message: Any,
+    *,
+    tool_call: dict[str, Any],
+    pending_tools: dict[str, dict[str, Any]],
+    tool_block_keys_by_index: dict[int, str],
+) -> None:
+    tool_key = _tool_state_key(tool_call["id"])
+    pending_tool = pending_tools.setdefault(
+        tool_key,
+        {
+            "id": tool_call["id"],
+            "name": tool_call["name"],
+            "args": None,
+            "json_buffer": "",
+        },
+    )
+    pending_tool["id"] = tool_call["id"]
+    pending_tool["name"] = tool_call["name"]
+    if tool_call["args"]:
+        pending_tool["args"] = tool_call["args"]
+
+    block_index = _extract_content_block_index(sdk_message)
+    if block_index is not None:
+        tool_block_keys_by_index[block_index] = tool_key
+
+
+def _record_tool_json_delta(
+    sdk_message: Any,
+    *,
+    pending_tools: dict[str, dict[str, Any]],
+    tool_block_keys_by_index: dict[int, str],
+) -> None:
+    delta = _extract_input_json_delta(sdk_message)
+    if delta is None:
+        return
+
+    block_index = _extract_content_block_index(sdk_message)
+    if block_index is None:
+        return
+
+    tool_key = tool_block_keys_by_index.get(block_index)
+    if tool_key is None:
+        tool_key = _tool_state_key(str(uuid4()))
+        tool_block_keys_by_index[block_index] = tool_key
+
+    pending_tool = pending_tools.setdefault(
+        tool_key,
+        {
+            "id": tool_key.removeprefix("id:"),
+            "name": "tool",
+            "args": None,
+            "json_buffer": "",
+        },
+    )
+    pending_tool["json_buffer"] = f"{pending_tool.get('json_buffer', '')}{delta}"
+    parsed_args = _try_parse_object(pending_tool["json_buffer"])
+    if parsed_args is not None:
+        pending_tool["args"] = parsed_args
+
+
+def _pop_ready_tool_call(
+    sdk_message: Any,
+    *,
+    tool_call: dict[str, Any] | None,
+    pending_tools: dict[str, dict[str, Any]],
+    projected_tool_ids: set[str],
+    tool_block_keys_by_index: dict[int, str],
+) -> dict[str, Any] | None:
+    tool_key: str | None = None
+    if tool_call is not None:
+        tool_key = _tool_state_key(tool_call["id"])
+    else:
+        block_index = _extract_content_block_index(sdk_message)
+        if block_index is not None:
+            tool_key = tool_block_keys_by_index.get(block_index)
+
+    if tool_key is None:
+        return None
+
+    pending_tool = pending_tools.get(tool_key)
+    if pending_tool is None:
+        return None
+
+    tool_id = pending_tool["id"]
+    if tool_id in projected_tool_ids:
+        pending_tools.pop(tool_key, None)
+        return None
+
+    args = pending_tool.get("args")
+    json_buffer = pending_tool.get("json_buffer")
+    if args is None and json_buffer:
+        args = _try_parse_object(json_buffer)
+        if args is not None:
+            pending_tool["args"] = args
+    if args is None:
+        return None
+
+    pending_tools.pop(tool_key, None)
+    return {
+        "id": tool_id,
+        "name": pending_tool["name"],
+        "args": args,
+    }
+
+
+def _tool_state_key(tool_id: str) -> str:
+    return f"id:{tool_id}"
+
+
+def _extract_content_block_index(sdk_message: Any) -> int | None:
+    event = getattr(sdk_message, "event", None)
+    index = _read_value(event, "index")
+    return index if isinstance(index, int) else None
+
+
+def _extract_input_json_delta(sdk_message: Any) -> str | None:
+    event = getattr(sdk_message, "event", None)
+    if _read_value(event, "type") != "content_block_delta":
+        return None
+
+    delta = _read_value(event, "delta")
+    if _read_value(delta, "type") != "input_json_delta":
+        return None
+
+    partial_json = _read_value(delta, "partial_json")
+    return partial_json if isinstance(partial_json, str) else None
+
+
+def _try_parse_object(value: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
 
 
 def _extract_tool_call(sdk_message: Any) -> dict[str, Any] | None:
