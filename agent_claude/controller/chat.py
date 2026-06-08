@@ -9,6 +9,7 @@ async def run_stream_chat(req: StreamChatRequest) -> StreamingResponse:
         stream_chat(
             conversation_id=req.conversation_id,
             message=req.message,
+            generate_title=req.generate_title,
         ),
         media_type="text/event-stream",
     )

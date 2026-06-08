@@ -5,12 +5,17 @@ from typing import Any
 from uuid import uuid4
 
 from core.database import AsyncSessionLocal
+from model.message_part import MessagePart
 from model.message import Message
+from model.tool_invocation import ToolInvocation
 from repository.agent_session import (
     get_agent_session_by_conversation_id,
     upsert_agent_session,
 )
+from repository.conversation import get_conversation_by_id
 from repository.message import create_message, update_message
+from repository.message_part import create_message_part, update_message_part_text
+from repository.tool_invocation import create_tool_invocation, update_tool_invocation
 from schema.chat import (
     ChatMessage,
     DeltaEvent,
@@ -18,6 +23,10 @@ from schema.chat import (
     ErrorEvent,
     MessageCreatedEvent,
     ReasoningEvent,
+    TitleEvent,
+    ToolCallEvent,
+    ToolInvocation as ToolInvocationSchema,
+    ToolResultEvent,
 )
 from service.runtime import stream_query
 from service.session_store import PostgresSessionStore
@@ -27,6 +36,7 @@ async def stream_chat(
     *,
     conversation_id: str,
     message: str,
+    generate_title: bool | None = None,
 ) -> AsyncIterator[str]:
     assistant_message_id = str(uuid4())
     now = datetime.now(UTC)
@@ -73,6 +83,9 @@ async def stream_chat(
     reasoning = ""
     has_partial_text = False
     has_partial_thinking = False
+    next_order_index = 0
+    reasoning_part_id: str | None = None
+    tool_invocation_started_at: dict[str, datetime] = {}
     sdk_session_id = getattr(existing_agent_session, "sdk_session_id", None)
     session_store = PostgresSessionStore(AsyncSessionLocal)
 
@@ -98,11 +111,53 @@ async def stream_chat(
                 has_partial_thinking = True
             for text in thinking_deltas:
                 reasoning += text
+                reasoning_part_id, next_order_index = await _persist_reasoning_delta(
+                    message_id=assistant_message_id,
+                    part_id=reasoning_part_id,
+                    text=reasoning,
+                    order_index=next_order_index,
+                )
                 yield _to_sse(
                     ReasoningEvent(
                         type="reasoning",
                         message_id=assistant_message_id,
                         text=text,
+                    )
+                )
+
+            tool_call = _extract_tool_call(sdk_message)
+            if tool_call is not None:
+                invocation, next_order_index = await _persist_tool_call(
+                    message_id=assistant_message_id,
+                    tool_id=tool_call["id"],
+                    tool_name=tool_call["name"],
+                    args=tool_call["args"],
+                    order_index=next_order_index,
+                )
+                tool_invocation_started_at[invocation.id] = datetime.now(UTC)
+                yield _to_sse(
+                    ToolCallEvent(
+                        type="tool_call",
+                        message_id=assistant_message_id,
+                        invocation=_project_tool_invocation(invocation),
+                    )
+                )
+
+            tool_result = _extract_tool_result(sdk_message)
+            if tool_result is not None:
+                started_at = tool_invocation_started_at.get(tool_result["id"])
+                latency_ms = _calculate_latency_ms(started_at, datetime.now(UTC))
+                invocation = await _persist_tool_result(
+                    tool_id=tool_result["id"],
+                    result=tool_result["result"],
+                    error=tool_result["error"],
+                    latency_ms=latency_ms,
+                )
+                yield _to_sse(
+                    ToolResultEvent(
+                        type="tool_result",
+                        message_id=assistant_message_id,
+                        invocation=_project_tool_invocation(invocation),
                     )
                 )
 
@@ -139,6 +194,21 @@ async def stream_chat(
                 )
             await session.commit()
 
+        if generate_title:
+            title = _generate_title(message)
+            title_updated = await _persist_title(
+                conversation_id=conversation_id,
+                title=title,
+            )
+            if title_updated:
+                yield _to_sse(
+                    TitleEvent(
+                        type="title",
+                        conversation_id=conversation_id,
+                        title=title,
+                    )
+                )
+
         yield _to_sse(
             DoneEvent(
                 type="done",
@@ -171,6 +241,106 @@ async def stream_chat(
         )
 
 
+async def _persist_reasoning_delta(
+    *,
+    message_id: str,
+    part_id: str | None,
+    text: str,
+    order_index: int,
+) -> tuple[str, int]:
+    async with AsyncSessionLocal() as session:
+        if part_id is None:
+            part_id = str(uuid4())
+            await create_message_part(
+                session,
+                MessagePart(
+                    id=part_id,
+                    message_id=message_id,
+                    type="reasoning",
+                    order_index=order_index,
+                    text=text,
+                    tool_invocation_id=None,
+                    created_at=datetime.now(UTC),
+                ),
+            )
+            next_order_index = order_index + 1
+        else:
+            await update_message_part_text(session, part_id=part_id, text=text)
+            next_order_index = order_index
+        await session.commit()
+    return part_id, next_order_index
+
+
+async def _persist_tool_call(
+    *,
+    message_id: str,
+    tool_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    order_index: int,
+) -> tuple[ToolInvocation, int]:
+    async with AsyncSessionLocal() as session:
+        invocation = await create_tool_invocation(
+            session,
+            ToolInvocation(
+                id=tool_id,
+                message_id=message_id,
+                tool_name=tool_name,
+                args=args,
+                result=None,
+                error=None,
+                latency_ms=None,
+                status="running",
+                created_at=datetime.now(UTC),
+            ),
+        )
+        await create_message_part(
+            session,
+            MessagePart(
+                id=str(uuid4()),
+                message_id=message_id,
+                type="tool",
+                order_index=order_index,
+                text="",
+                tool_invocation_id=tool_id,
+                created_at=datetime.now(UTC),
+            ),
+        )
+        await session.commit()
+    return invocation, order_index + 1
+
+
+async def _persist_tool_result(
+    *,
+    tool_id: str,
+    result: Any | None,
+    error: str | None,
+    latency_ms: int | None,
+) -> ToolInvocation:
+    async with AsyncSessionLocal() as session:
+        invocation = await update_tool_invocation(
+            session,
+            invocation_id=tool_id,
+            result=result,
+            error=error,
+            latency_ms=latency_ms,
+            status="error" if error else "completed",
+        )
+        await session.commit()
+    return invocation
+
+
+async def _persist_title(*, conversation_id: str, title: str) -> bool:
+    async with AsyncSessionLocal() as session:
+        conversation = await get_conversation_by_id(session, conversation_id)
+        if conversation is None:
+            return False
+        conversation.title = title
+        await session.flush()
+        await session.commit()
+    return True
+
+
 def _project_stream_message(message: Message) -> ChatMessage:
     return ChatMessage(
         id=message.id,
@@ -182,6 +352,20 @@ def _project_stream_message(message: Message) -> ChatMessage:
         timeline_parts=[],
         status=message.status,
         created_at=_format_datetime(message.created_at),
+    )
+
+
+def _project_tool_invocation(invocation: ToolInvocation) -> ToolInvocationSchema:
+    return ToolInvocationSchema(
+        id=invocation.id,
+        message_id=invocation.message_id,
+        tool_name=invocation.tool_name,
+        args=invocation.args,
+        result=invocation.result,
+        error=invocation.error,
+        latency_ms=invocation.latency_ms,
+        status=invocation.status,
+        created_at=_format_datetime(invocation.created_at),
     )
 
 
@@ -200,6 +384,90 @@ def _extract_session_id(sdk_message: Any) -> str | None:
 def _is_content_block_delta_event(sdk_message: Any) -> bool:
     event = getattr(sdk_message, "event", None)
     return isinstance(event, dict) and event.get("type") == "content_block_delta"
+
+
+def _extract_tool_call(sdk_message: Any) -> dict[str, Any] | None:
+    block = _extract_content_block(sdk_message)
+    if _read_value(block, "type") != "tool_use":
+        return None
+
+    tool_id = _read_value(block, "id") or _read_value(block, "tool_use_id")
+    tool_name = _read_value(block, "name") or _read_value(block, "tool_name")
+    args = _read_value(block, "input")
+    if args is None:
+        args = _read_value(block, "args") or {}
+
+    if not isinstance(tool_id, str) or not tool_id:
+        tool_id = str(uuid4())
+    if not isinstance(tool_name, str) or not tool_name:
+        tool_name = "tool"
+    if not isinstance(args, dict):
+        args = {"value": args}
+
+    return {"id": tool_id, "name": tool_name, "args": args}
+
+
+def _extract_tool_result(sdk_message: Any) -> dict[str, Any] | None:
+    block = _extract_content_block(sdk_message)
+    if _read_value(block, "type") != "tool_result":
+        return None
+
+    tool_id = _read_value(block, "tool_use_id") or _read_value(block, "id")
+    if not isinstance(tool_id, str) or not tool_id:
+        return None
+
+    error = _extract_tool_result_error(block)
+    result = None if error else _extract_tool_result_payload(block)
+    return {"id": tool_id, "result": result, "error": error}
+
+
+def _extract_content_block(sdk_message: Any) -> Any | None:
+    event = getattr(sdk_message, "event", None)
+    if event is not None:
+        block = _read_value(event, "content_block")
+        if block is not None:
+            return block
+        event_type = _read_value(event, "type")
+        return event if event_type in {"tool_use", "tool_result"} else None
+
+    content = getattr(sdk_message, "content", None)
+    if isinstance(content, list):
+        for block in content:
+            block_type = _read_value(block, "type")
+            if block_type in {"tool_use", "tool_result"}:
+                return block
+
+    message_type = getattr(sdk_message, "type", None)
+    return sdk_message if message_type in {"tool_use", "tool_result"} else None
+
+
+def _extract_tool_result_payload(block: Any) -> Any | None:
+    result = _read_value(block, "result")
+    if result is not None:
+        return result
+    return _read_value(block, "content")
+
+
+def _extract_tool_result_error(block: Any) -> str | None:
+    error = _read_value(block, "error")
+    if isinstance(error, str):
+        return error or None
+    if error is not None:
+        return json.dumps(error, ensure_ascii=False)
+    if _read_value(block, "is_error") is True:
+        payload = _extract_tool_result_payload(block)
+        if isinstance(payload, str) and payload:
+            return payload
+        if payload is not None:
+            return json.dumps(payload, ensure_ascii=False)
+        return "Tool execution failed"
+    return None
+
+
+def _read_value(source: Any, key: str) -> Any | None:
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, key, None)
 
 
 def _extract_result_error_message(sdk_message: Any) -> str | None:
@@ -289,3 +557,14 @@ def _format_datetime(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _calculate_latency_ms(started_at: datetime | None, finished_at: datetime) -> int | None:
+    if started_at is None:
+        return None
+    return max(0, int((finished_at - started_at).total_seconds() * 1000))
+
+
+def _generate_title(prompt: str) -> str:
+    title = " ".join(prompt.strip().split())
+    return title[:60] if title else "New chat"
