@@ -388,7 +388,7 @@ def _is_content_block_delta_event(sdk_message: Any) -> bool:
 
 def _extract_tool_call(sdk_message: Any) -> dict[str, Any] | None:
     block = _extract_content_block(sdk_message)
-    if _read_value(block, "type") != "tool_use":
+    if not _is_tool_use_block(block):
         return None
 
     tool_id = _read_value(block, "id") or _read_value(block, "tool_use_id")
@@ -409,7 +409,7 @@ def _extract_tool_call(sdk_message: Any) -> dict[str, Any] | None:
 
 def _extract_tool_result(sdk_message: Any) -> dict[str, Any] | None:
     block = _extract_content_block(sdk_message)
-    if _read_value(block, "type") != "tool_result":
+    if not _is_tool_result_block(block):
         return None
 
     tool_id = _read_value(block, "tool_use_id") or _read_value(block, "id")
@@ -433,12 +433,28 @@ def _extract_content_block(sdk_message: Any) -> Any | None:
     content = getattr(sdk_message, "content", None)
     if isinstance(content, list):
         for block in content:
-            block_type = _read_value(block, "type")
-            if block_type in {"tool_use", "tool_result"}:
+            if _is_tool_block(block):
                 return block
 
-    message_type = getattr(sdk_message, "type", None)
-    return sdk_message if message_type in {"tool_use", "tool_result"} else None
+    return sdk_message if _is_tool_block(sdk_message) else None
+
+
+def _is_tool_block(block: Any) -> bool:
+    return _is_tool_use_block(block) or _is_tool_result_block(block)
+
+
+def _is_tool_use_block(block: Any) -> bool:
+    if _read_value(block, "type") == "tool_use":
+        return True
+    return _has_value(block, "id") and _has_value(block, "name") and _has_value(block, "input")
+
+
+def _is_tool_result_block(block: Any) -> bool:
+    if _read_value(block, "type") == "tool_result":
+        return True
+    return _has_value(block, "tool_use_id") and (
+        _has_value(block, "content") or _has_value(block, "is_error")
+    )
 
 
 def _extract_tool_result_payload(block: Any) -> Any | None:
@@ -468,6 +484,12 @@ def _read_value(source: Any, key: str) -> Any | None:
     if isinstance(source, dict):
         return source.get(key)
     return getattr(source, key, None)
+
+
+def _has_value(source: Any, key: str) -> bool:
+    if isinstance(source, dict):
+        return key in source
+    return hasattr(source, key)
 
 
 def _extract_result_error_message(sdk_message: Any) -> str | None:

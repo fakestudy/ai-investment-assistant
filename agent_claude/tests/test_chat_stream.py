@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from claude_agent_sdk.types import ToolResultBlock, ToolUseBlock
 import model.conversation  # noqa: F401
 from model.message_part import MessagePart
 from pydantic import TypeAdapter
@@ -78,8 +79,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
             yield SimpleNamespace(
                 event=SimpleNamespace(
                     type="content_block_start",
-                    content_block=SimpleNamespace(
-                        type="tool_use",
+                    content_block=ToolUseBlock(
                         id="sdk-tool-1",
                         name="get_quote",
                         input={"symbol": "AAPL"},
@@ -89,10 +89,10 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
             yield SimpleNamespace(
                 event=SimpleNamespace(
                     type="content_block_start",
-                    content_block=SimpleNamespace(
-                        type="tool_result",
+                    content_block=ToolResultBlock(
                         tool_use_id="sdk-tool-1",
                         content={"price": 100},
+                        is_error=False,
                     ),
                 ),
             )
