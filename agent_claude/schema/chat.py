@@ -67,3 +67,77 @@ class ChatMessage(FrontendModel):
 class ConversationMessagesResponse(FrontendModel):
     messages: list[ChatMessage]
     active_run: None = Field(default=None, alias="activeRun")
+
+
+class StreamChatRequest(FrontendModel):
+    conversation_id: str = Field(alias="conversationId")
+    message: str
+    generate_title: bool | None = Field(default=None, alias="generateTitle")
+    parent_message_id: str | None = Field(default=None, alias="parentMessageId")
+    regenerate_from_message_id: str | None = Field(
+        default=None,
+        alias="regenerateFromMessageId",
+    )
+
+
+class ChatStreamEventBase(FrontendModel):
+    run_id: str = Field(alias="runId")
+
+
+class MessageCreatedEvent(ChatStreamEventBase):
+    type: Literal["message_created"]
+    message: ChatMessage
+
+
+class ReasoningEvent(ChatStreamEventBase):
+    type: Literal["reasoning"]
+    message_id: str = Field(alias="messageId")
+    text: str
+
+
+class DeltaEvent(ChatStreamEventBase):
+    type: Literal["delta"]
+    message_id: str = Field(alias="messageId")
+    text: str
+
+
+class DoneEvent(ChatStreamEventBase):
+    type: Literal["done"]
+    message_id: str = Field(alias="messageId")
+
+
+class ErrorEvent(ChatStreamEventBase):
+    type: Literal["error"]
+    message_id: str | None = Field(default=None, alias="messageId")
+    message: str
+
+
+class ToolCallEvent(ChatStreamEventBase):
+    type: Literal["tool_call"]
+    message_id: str = Field(alias="messageId")
+    invocation: ToolInvocation
+
+
+class ToolResultEvent(ChatStreamEventBase):
+    type: Literal["tool_result"]
+    message_id: str = Field(alias="messageId")
+    invocation: ToolInvocation
+
+
+class TitleEvent(ChatStreamEventBase):
+    type: Literal["title"]
+    conversation_id: str = Field(alias="conversationId")
+    title: str
+
+
+ChatStreamEvent = Annotated[
+    MessageCreatedEvent
+    | ReasoningEvent
+    | DeltaEvent
+    | DoneEvent
+    | ErrorEvent
+    | ToolCallEvent
+    | ToolResultEvent
+    | TitleEvent,
+    Field(discriminator="type"),
+]
