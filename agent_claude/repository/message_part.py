@@ -13,6 +13,20 @@ async def create_message_part(
     return message_part
 
 
+async def update_message_part_text(
+    session: AsyncSession,
+    *,
+    part_id: str,
+    text: str,
+) -> None:
+    message_part = await session.get(MessagePart, part_id)
+    if message_part is None:
+        return
+
+    message_part.text = text
+    await session.flush()
+
+
 async def get_message_parts_by_message_id(
     session: AsyncSession,
     message_id: str,

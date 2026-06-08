@@ -13,6 +13,26 @@ async def create_tool_invocation(
     return invocation
 
 
+async def update_tool_invocation(
+    session: AsyncSession,
+    *,
+    invocation_id: str,
+    result: object | None = None,
+    error: str | None = None,
+    latency_ms: int | None = None,
+    status: str,
+) -> None:
+    invocation = await session.get(ToolInvocation, invocation_id)
+    if invocation is None:
+        return
+
+    invocation.result = result
+    invocation.error = error
+    invocation.latency_ms = latency_ms
+    invocation.status = status
+    await session.flush()
+
+
 async def get_tool_invocation_by_id(
     session: AsyncSession,
     invocation_id: str,

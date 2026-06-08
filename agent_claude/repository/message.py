@@ -11,6 +11,24 @@ async def create_message(session: AsyncSession, message: Message) -> Message:
     return message
 
 
+async def update_message(
+    session: AsyncSession,
+    *,
+    message_id: str,
+    content: str,
+    reasoning: str,
+    status: str,
+) -> None:
+    message = await session.get(Message, message_id)
+    if message is None:
+        return
+
+    message.content = content
+    message.reasoning = reasoning
+    message.status = status
+    await session.flush()
+
+
 async def get_message_by_id(session: AsyncSession, message_id: str) -> Message | None:
     result = await session.execute(
         select(Message)

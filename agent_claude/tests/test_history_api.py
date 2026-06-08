@@ -1,9 +1,13 @@
+import asyncio
 import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from pydantic import TypeAdapter
 
+from repository.message import update_message
+from repository.message_part import update_message_part_text
+from repository.tool_invocation import update_tool_invocation
 from schema.chat import (
     ChatTimelinePart,
     ConversationMessagesResponse,
@@ -12,7 +16,88 @@ from schema.chat import (
 from service.history import project_conversation_messages
 
 
+class FakeSession:
+    def __init__(self, objects: dict[object, object]) -> None:
+        self._objects = objects
+        self.flushed = False
+
+    async def get(self, model: object, object_id: str) -> object | None:
+        return self._objects.get((model, object_id))
+
+    async def flush(self) -> None:
+        self.flushed = True
+
+
 class HistoryProjectionTest(unittest.TestCase):
+    def test_update_message_updates_projection_fields(self) -> None:
+        from model.message import Message
+
+        message = SimpleNamespace(content="", reasoning="", status="streaming")
+        session = FakeSession({(Message, "message-1"): message})
+
+        async def run() -> None:
+            await update_message(
+                session,
+                message_id="message-1",
+                content="回答内容",
+                reasoning="推理内容",
+                status="done",
+            )
+
+        asyncio.run(run())
+
+        self.assertEqual(message.content, "回答内容")
+        self.assertEqual(message.reasoning, "推理内容")
+        self.assertEqual(message.status, "done")
+        self.assertTrue(session.flushed)
+
+    def test_update_tool_invocation_updates_result_error_latency_and_status(self) -> None:
+        from model.tool_invocation import ToolInvocation
+
+        invocation = SimpleNamespace(
+            result=None,
+            error=None,
+            latency_ms=None,
+            status="running",
+        )
+        session = FakeSession({(ToolInvocation, "tool-1"): invocation})
+
+        async def run() -> None:
+            await update_tool_invocation(
+                session,
+                invocation_id="tool-1",
+                result={"price": 100},
+                error="",
+                latency_ms=12,
+                status="completed",
+            )
+
+        asyncio.run(run())
+
+        self.assertEqual(invocation.result, {"price": 100})
+        self.assertEqual(invocation.error, "")
+        self.assertEqual(invocation.latency_ms, 12)
+        self.assertEqual(invocation.status, "completed")
+        self.assertTrue(session.flushed)
+
+    def test_update_message_part_text_updates_text(self) -> None:
+        from model.message_part import MessagePart
+
+        message_part = SimpleNamespace(text="")
+        session = FakeSession({(MessagePart, "part-1"): message_part})
+
+        async def run() -> None:
+            await update_message_part_text(
+                session,
+                part_id="part-1",
+                text="增量文本",
+            )
+
+        asyncio.run(run())
+
+        self.assertEqual(message_part.text, "增量文本")
+        self.assertTrue(session.flushed)
+
     def test_schema_serializes_frontend_history_aliases(self) -> None:
         response = ConversationMessagesResponse(
             messages=[
