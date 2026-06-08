@@ -154,12 +154,14 @@ async def stream_chat(
                     tool_block_keys_by_index=stream_state.tool_block_keys_by_index,
                 )
 
+            tool_result = _extract_tool_result(sdk_message)
             ready_tool_call = _pop_ready_tool_call(
                 sdk_message,
                 tool_call=tool_call,
                 pending_tools=stream_state.pending_tools,
                 projected_tool_ids=stream_state.projected_tool_ids,
                 tool_block_keys_by_index=stream_state.tool_block_keys_by_index,
+                tool_result=tool_result,
             )
             if ready_tool_call is not None:
                 invocation, stream_state.next_order_index = await _persist_tool_call(
@@ -181,7 +183,6 @@ async def stream_chat(
                     )
                 )
 
-            tool_result = _extract_tool_result(sdk_message)
             if tool_result is not None:
                 started_at = stream_state.tool_invocation_started_at.get(tool_result["id"])
                 latency_ms = _calculate_latency_ms(started_at, datetime.now(UTC))
@@ -482,7 +483,7 @@ def _record_tool_call(
     )
     pending_tool["id"] = tool_call["id"]
     pending_tool["name"] = tool_call["name"]
-    if tool_call["args"]:
+    if tool_call["args"] is not None:
         pending_tool["args"] = tool_call["args"]
 
     block_index = _extract_content_block_index(sdk_message)
@@ -531,10 +532,13 @@ def _pop_ready_tool_call(
     pending_tools: dict[str, dict[str, Any]],
     projected_tool_ids: set[str],
     tool_block_keys_by_index: dict[int, str],
+    tool_result: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     tool_key: str | None = None
     if tool_call is not None:
         tool_key = _tool_state_key(tool_call["id"])
+    elif tool_result is not None:
+        tool_key = _tool_state_key(tool_result["id"])
     else:
         block_index = _extract_content_block_index(sdk_message)
         if block_index is not None:
@@ -552,13 +556,19 @@ def _pop_ready_tool_call(
         pending_tools.pop(tool_key, None)
         return None
 
-    args = pending_tool.get("args")
     json_buffer = pending_tool.get("json_buffer")
-    if args is None and json_buffer:
-        args = _try_parse_object(json_buffer)
-        if args is not None:
-            pending_tool["args"] = args
+    args = _try_parse_object(json_buffer) if json_buffer else pending_tool.get("args")
+    if args is not None:
+        pending_tool["args"] = args
     if args is None:
+        return None
+    if (
+        args == {}
+        and tool_call is not None
+        and _is_tool_call_start_event(sdk_message)
+        and _extract_content_block_index(sdk_message) is not None
+        and not json_buffer
+    ):
         return None
 
     pending_tools.pop(tool_key, None)
@@ -571,6 +581,10 @@ def _pop_ready_tool_call(
 
 def _tool_state_key(tool_id: str) -> str:
     return f"id:{tool_id}"
+
+
+def _is_tool_call_start_event(sdk_message: Any) -> bool:
+    return _read_value(getattr(sdk_message, "event", None), "type") == "content_block_start"
 
 
 def _extract_content_block_index(sdk_message: Any) -> int | None:

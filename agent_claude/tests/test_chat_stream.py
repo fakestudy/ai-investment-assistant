@@ -143,6 +143,79 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(part.order_index, 0)
         self.assertEqual(part.tool_invocation_id, "sdk-tool-1")
 
+    async def test_stream_chat_projects_empty_args_tool_call_without_json_delta(
+        self,
+    ) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            yield SimpleNamespace(
+                event=SimpleNamespace(
+                    type="content_block_start",
+                    content_block=ToolUseBlock(
+                        id="sdk-tool-1",
+                        name="get_portfolio_summary",
+                        input={},
+                    ),
+                ),
+            )
+            yield SimpleNamespace(
+                event=SimpleNamespace(
+                    type="content_block_start",
+                    content_block=ToolResultBlock(
+                        tool_use_id="sdk-tool-1",
+                        content='{"summary": "ok"}',
+                        is_error=False,
+                    ),
+                ),
+            )
+
+        async def fake_get_agent_session_by_conversation_id(session, conversation_id):
+            return None
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+            patch.object(
+                chat_service,
+                "get_agent_session_by_conversation_id",
+                fake_get_agent_session_by_conversation_id,
+            ),
+        ):
+            events = [
+                _decode_sse(frame)
+                async for frame in chat_service.stream_chat(
+                    conversation_id="conversation-1",
+                    message="summarize portfolio",
+                )
+            ]
+
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["message_created", "tool_call", "tool_result", "done"],
+        )
+        self.assertEqual(events[1]["invocation"]["id"], "sdk-tool-1")
+        self.assertEqual(
+            events[1]["invocation"]["toolName"],
+            "get_portfolio_summary",
+        )
+        self.assertEqual(events[1]["invocation"]["args"], {})
+        self.assertEqual(
+            events[2]["invocation"]["toolName"],
+            "get_portfolio_summary",
+        )
+        self.assertEqual(events[2]["invocation"]["args"], {})
+        self.assertEqual(events[2]["invocation"]["result"], {"summary": "ok"})
+
+        invocation = factory.session.messages["_tool_invocations"]["sdk-tool-1"]
+        self.assertEqual(invocation.tool_name, "get_portfolio_summary")
+        self.assertEqual(invocation.args, {})
+        self.assertEqual(invocation.result, {"summary": "ok"})
+
     async def test_stream_chat_projects_text_tool_result_blocks_from_sdk_events(self) -> None:
         from schema.chat import ChatStreamResponse
         from service import chat as chat_service
