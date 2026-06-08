@@ -176,6 +176,112 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         assistant = factory.session.messages[events[0]["message"]["id"]]
         self.assertEqual(assistant.status, "error")
 
+    async def test_stream_chat_maps_sdk_result_error_to_error_event(self) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+        upserts: list[tuple[str, str]] = []
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            yield SimpleNamespace(
+                session_id="sdk-session-error",
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "partial"},
+                },
+            )
+            yield SimpleNamespace(
+                session_id="sdk-session-error",
+                subtype="error",
+                is_error=True,
+                errors=[{"message": "quota exceeded"}],
+            )
+
+        async def fake_get_agent_session_by_conversation_id(session, conversation_id):
+            return None
+
+        async def fake_upsert_agent_session(session, *, conversation_id, sdk_session_id):
+            upserts.append((conversation_id, sdk_session_id))
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+            patch.object(
+                chat_service,
+                "get_agent_session_by_conversation_id",
+                fake_get_agent_session_by_conversation_id,
+            ),
+            patch.object(chat_service, "upsert_agent_session", fake_upsert_agent_session),
+        ):
+            frames = [
+                frame
+                async for frame in chat_service.stream_chat(
+                    conversation_id="conversation-1",
+                    message="hello",
+                )
+            ]
+
+        events = [_decode_sse(frame) for frame in frames]
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["message_created", "delta", "error"],
+        )
+        self.assertEqual(events[2]["messageId"], events[0]["message"]["id"])
+        self.assertEqual(events[2]["message"], "quota exceeded")
+        self.assertEqual(upserts, [("conversation-1", "sdk-session-error")])
+
+        assistant = factory.session.messages[events[0]["message"]["id"]]
+        self.assertEqual(assistant.content, "partial")
+        self.assertEqual(assistant.status, "error")
+
+    async def test_stream_chat_upserts_session_after_session_id_then_exception(
+        self,
+    ) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+        upserts: list[tuple[str, str]] = []
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            yield SimpleNamespace(session_id="sdk-session-before-error")
+            raise RuntimeError("sdk disconnected")
+
+        async def fake_get_agent_session_by_conversation_id(session, conversation_id):
+            return None
+
+        async def fake_upsert_agent_session(session, *, conversation_id, sdk_session_id):
+            upserts.append((conversation_id, sdk_session_id))
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+            patch.object(
+                chat_service,
+                "get_agent_session_by_conversation_id",
+                fake_get_agent_session_by_conversation_id,
+            ),
+            patch.object(chat_service, "upsert_agent_session", fake_upsert_agent_session),
+        ):
+            events = [
+                _decode_sse(frame)
+                async for frame in chat_service.stream_chat(
+                    conversation_id="conversation-1",
+                    message="hello",
+                )
+            ]
+
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+        self.assertEqual([event["type"] for event in events], ["message_created", "error"])
+        self.assertEqual(events[1]["message"], "sdk disconnected")
+        self.assertEqual(upserts, [("conversation-1", "sdk-session-before-error")])
+
+        assistant = factory.session.messages[events[0]["message"]["id"]]
+        self.assertEqual(assistant.status, "error")
+
     def test_controller_returns_text_event_stream_response(self) -> None:
         from controller.chat import run_stream_chat
         from schema.chat import StreamChatRequest

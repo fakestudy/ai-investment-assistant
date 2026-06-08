@@ -83,6 +83,10 @@ async def stream_chat(
             resume=sdk_session_id,
         ):
             sdk_session_id = _extract_session_id(sdk_message) or sdk_session_id
+            sdk_result_error = _extract_result_error_message(sdk_message)
+            if sdk_result_error is not None:
+                raise RuntimeError(sdk_result_error)
+
             is_partial_delta = _is_content_block_delta_event(sdk_message)
 
             thinking_deltas = (
@@ -150,6 +154,12 @@ async def stream_chat(
                 reasoning=reasoning,
                 status="error",
             )
+            if sdk_session_id:
+                await upsert_agent_session(
+                    session,
+                    conversation_id=conversation_id,
+                    sdk_session_id=sdk_session_id,
+                )
             await session.commit()
 
         yield _to_sse(
@@ -190,6 +200,43 @@ def _extract_session_id(sdk_message: Any) -> str | None:
 def _is_content_block_delta_event(sdk_message: Any) -> bool:
     event = getattr(sdk_message, "event", None)
     return isinstance(event, dict) and event.get("type") == "content_block_delta"
+
+
+def _extract_result_error_message(sdk_message: Any) -> str | None:
+    if not _is_error_result_message(sdk_message):
+        return None
+
+    errors = getattr(sdk_message, "errors", None)
+    if isinstance(errors, list):
+        for error in errors:
+            message = _extract_error_text(error)
+            if message:
+                return message
+
+    return "SDK stream result failed"
+
+
+def _is_error_result_message(sdk_message: Any) -> bool:
+    if getattr(sdk_message, "is_error", False) is True:
+        return True
+
+    subtype = getattr(sdk_message, "subtype", None)
+    if isinstance(subtype, str) and subtype.lower() in {"error", "failed", "failure"}:
+        return True
+
+    errors = getattr(sdk_message, "errors", None)
+    return bool(errors)
+
+
+def _extract_error_text(error: Any) -> str | None:
+    if isinstance(error, str) and error:
+        return error
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("error")
+        return message if isinstance(message, str) and message else None
+
+    message = getattr(error, "message", None)
+    return message if isinstance(message, str) and message else None
 
 
 def _extract_text_deltas(sdk_message: Any) -> list[str]:
