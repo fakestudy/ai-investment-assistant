@@ -55,7 +55,7 @@ def _decode_sse(frame: str) -> dict:
 
 class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_stream_chat_yields_frontend_sse_and_persists_success(self) -> None:
-        from schema.chat import ChatStreamEvent
+        from schema.chat import ChatStreamResponse
         from service import chat as chat_service
 
         factory = _FakeSessionFactory()
@@ -112,7 +112,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
             ]
 
         events = [_decode_sse(frame) for frame in frames]
-        TypeAdapter(list[ChatStreamEvent]).validate_python(events)
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
 
         self.assertEqual(
             [event["type"] for event in events],
@@ -133,7 +133,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant.status, "done")
 
     async def test_stream_chat_marks_assistant_error_and_yields_error_event(self) -> None:
-        from schema.chat import ChatStreamEvent
+        from schema.chat import ChatStreamResponse
         from service import chat as chat_service
 
         factory = _FakeSessionFactory()
@@ -167,7 +167,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
             ]
 
         events = [_decode_sse(frame) for frame in frames]
-        TypeAdapter(list[ChatStreamEvent]).validate_python(events)
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
 
         self.assertEqual([event["type"] for event in events], ["message_created", "error"])
         self.assertEqual(events[1]["messageId"], events[0]["message"]["id"])
@@ -190,15 +190,28 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(response, StreamingResponse)
         self.assertEqual(response.media_type, "text/event-stream")
 
-    def test_stream_event_schema_keeps_tool_and_title_compatibility(self) -> None:
-        from schema.chat import ChatStreamEvent
+    def test_chat_stream_response_accepts_ordinary_events_without_run_id(self) -> None:
+        from schema.chat import ChatStreamResponse
 
-        adapter = TypeAdapter(ChatStreamEvent)
+        adapter = TypeAdapter(ChatStreamResponse)
+
+        message_created = adapter.validate_python(
+            {
+                "type": "message_created",
+                "message": {
+                    "id": "assistant-1",
+                    "conversationId": "conversation-1",
+                    "role": "assistant",
+                    "content": "",
+                    "status": "streaming",
+                    "createdAt": "2026-06-08T00:00:00Z",
+                },
+            }
+        )
 
         tool_call = adapter.validate_python(
             {
                 "type": "tool_call",
-                "runId": "run-1",
                 "messageId": "assistant-1",
                 "invocation": {
                     "id": "tool-1",
@@ -212,14 +225,126 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         title = adapter.validate_python(
             {
                 "type": "title",
-                "runId": "run-1",
                 "conversationId": "conversation-1",
                 "title": "Apple analysis",
             }
         )
 
+        self.assertEqual(message_created.type, "message_created")
         self.assertEqual(tool_call.type, "tool_call")
         self.assertEqual(title.type, "title")
+
+    async def test_stream_chat_does_not_repeat_final_assistant_text_after_partial(
+        self,
+    ) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            yield SimpleNamespace(
+                type="stream_event",
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "answer"},
+                },
+            )
+            yield SimpleNamespace(
+                type="assistant",
+                content=[SimpleNamespace(text="answer")],
+            )
+
+        async def fake_get_agent_session_by_conversation_id(session, conversation_id):
+            return None
+
+        async def fake_upsert_agent_session(session, *, conversation_id, sdk_session_id):
+            raise AssertionError("should not upsert without session id")
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+            patch.object(
+                chat_service,
+                "get_agent_session_by_conversation_id",
+                fake_get_agent_session_by_conversation_id,
+            ),
+            patch.object(chat_service, "upsert_agent_session", fake_upsert_agent_session),
+        ):
+            events = [
+                _decode_sse(frame)
+                async for frame in chat_service.stream_chat(
+                    conversation_id="conversation-1",
+                    message="hello",
+                )
+            ]
+
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+        self.assertEqual(
+            [event for event in events if event["type"] == "delta"],
+            [{"type": "delta", "messageId": events[0]["message"]["id"], "text": "answer"}],
+        )
+        assistant = factory.session.messages[events[0]["message"]["id"]]
+        self.assertEqual(assistant.content, "answer")
+
+    async def test_stream_chat_does_not_repeat_final_assistant_thinking_after_partial(
+        self,
+    ) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            yield SimpleNamespace(
+                type="stream_event",
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "thinking_delta", "thinking": "think"},
+                },
+            )
+            yield SimpleNamespace(
+                type="assistant",
+                content=[SimpleNamespace(thinking="think")],
+            )
+
+        async def fake_get_agent_session_by_conversation_id(session, conversation_id):
+            return None
+
+        async def fake_upsert_agent_session(session, *, conversation_id, sdk_session_id):
+            raise AssertionError("should not upsert without session id")
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+            patch.object(
+                chat_service,
+                "get_agent_session_by_conversation_id",
+                fake_get_agent_session_by_conversation_id,
+            ),
+            patch.object(chat_service, "upsert_agent_session", fake_upsert_agent_session),
+        ):
+            events = [
+                _decode_sse(frame)
+                async for frame in chat_service.stream_chat(
+                    conversation_id="conversation-1",
+                    message="hello",
+                )
+            ]
+
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+        self.assertEqual(
+            [event for event in events if event["type"] == "reasoning"],
+            [
+                {
+                    "type": "reasoning",
+                    "messageId": events[0]["message"]["id"],
+                    "text": "think",
+                }
+            ],
+        )
+        assistant = factory.session.messages[events[0]["message"]["id"]]
+        self.assertEqual(assistant.reasoning, "think")
 
 
 if __name__ == "__main__":

@@ -28,7 +28,6 @@ async def stream_chat(
     conversation_id: str,
     message: str,
 ) -> AsyncIterator[str]:
-    run_id = str(uuid4())
     assistant_message_id = str(uuid4())
     now = datetime.now(UTC)
 
@@ -66,13 +65,14 @@ async def stream_chat(
     yield _to_sse(
         MessageCreatedEvent(
             type="message_created",
-            run_id=run_id,
             message=_project_stream_message(assistant_message),
         )
     )
 
     content = ""
     reasoning = ""
+    has_partial_text = False
+    has_partial_thinking = False
     sdk_session_id = getattr(existing_agent_session, "sdk_session_id", None)
     session_store = PostgresSessionStore(AsyncSessionLocal)
 
@@ -83,24 +83,37 @@ async def stream_chat(
             resume=sdk_session_id,
         ):
             sdk_session_id = _extract_session_id(sdk_message) or sdk_session_id
+            is_partial_delta = _is_content_block_delta_event(sdk_message)
 
-            for text in _extract_thinking_deltas(sdk_message):
+            thinking_deltas = (
+                _extract_thinking_deltas(sdk_message)
+                if is_partial_delta or not has_partial_thinking
+                else []
+            )
+            if is_partial_delta and thinking_deltas:
+                has_partial_thinking = True
+            for text in thinking_deltas:
                 reasoning += text
                 yield _to_sse(
                     ReasoningEvent(
                         type="reasoning",
-                        run_id=run_id,
                         message_id=assistant_message_id,
                         text=text,
                     )
                 )
 
-            for text in _extract_text_deltas(sdk_message):
+            text_deltas = (
+                _extract_text_deltas(sdk_message)
+                if is_partial_delta or not has_partial_text
+                else []
+            )
+            if is_partial_delta and text_deltas:
+                has_partial_text = True
+            for text in text_deltas:
                 content += text
                 yield _to_sse(
                     DeltaEvent(
                         type="delta",
-                        run_id=run_id,
                         message_id=assistant_message_id,
                         text=text,
                     )
@@ -125,7 +138,6 @@ async def stream_chat(
         yield _to_sse(
             DoneEvent(
                 type="done",
-                run_id=run_id,
                 message_id=assistant_message_id,
             )
         )
@@ -143,7 +155,6 @@ async def stream_chat(
         yield _to_sse(
             ErrorEvent(
                 type="error",
-                run_id=run_id,
                 message_id=assistant_message_id,
                 message=str(exc) or exc.__class__.__name__,
             )
@@ -176,13 +187,23 @@ def _extract_session_id(sdk_message: Any) -> str | None:
     return None
 
 
+def _is_content_block_delta_event(sdk_message: Any) -> bool:
+    event = getattr(sdk_message, "event", None)
+    return isinstance(event, dict) and event.get("type") == "content_block_delta"
+
+
 def _extract_text_deltas(sdk_message: Any) -> list[str]:
     event = getattr(sdk_message, "event", None)
     if isinstance(event, dict):
-        delta = event.get("delta")
-        if isinstance(delta, dict) and delta.get("type") == "text_delta":
-            text = delta.get("text")
-            return [text] if isinstance(text, str) and text else []
+        if event.get("type") == "content_block_delta":
+            delta = event.get("delta")
+            if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                text = delta.get("text")
+                return [text] if isinstance(text, str) and text else []
+            return []
+
+    if getattr(sdk_message, "type", None) == "stream_event":
+        return []
 
     content = getattr(sdk_message, "content", None)
     if isinstance(content, list):
@@ -197,10 +218,15 @@ def _extract_text_deltas(sdk_message: Any) -> list[str]:
 def _extract_thinking_deltas(sdk_message: Any) -> list[str]:
     event = getattr(sdk_message, "event", None)
     if isinstance(event, dict):
-        delta = event.get("delta")
-        if isinstance(delta, dict) and delta.get("type") == "thinking_delta":
-            thinking = delta.get("thinking")
-            return [thinking] if isinstance(thinking, str) and thinking else []
+        if event.get("type") == "content_block_delta":
+            delta = event.get("delta")
+            if isinstance(delta, dict) and delta.get("type") == "thinking_delta":
+                thinking = delta.get("thinking")
+                return [thinking] if isinstance(thinking, str) and thinking else []
+            return []
+
+    if getattr(sdk_message, "type", None) == "stream_event":
+        return []
 
     content = getattr(sdk_message, "content", None)
     if isinstance(content, list):

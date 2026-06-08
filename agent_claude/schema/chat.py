@@ -80,57 +80,53 @@ class StreamChatRequest(FrontendModel):
     )
 
 
-class ChatStreamEventBase(FrontendModel):
-    run_id: str = Field(alias="runId")
-
-
-class MessageCreatedEvent(ChatStreamEventBase):
+class MessageCreatedEvent(FrontendModel):
     type: Literal["message_created"]
     message: ChatMessage
 
 
-class ReasoningEvent(ChatStreamEventBase):
+class ReasoningEvent(FrontendModel):
     type: Literal["reasoning"]
     message_id: str = Field(alias="messageId")
     text: str
 
 
-class DeltaEvent(ChatStreamEventBase):
+class DeltaEvent(FrontendModel):
     type: Literal["delta"]
     message_id: str = Field(alias="messageId")
     text: str
 
 
-class DoneEvent(ChatStreamEventBase):
+class DoneEvent(FrontendModel):
     type: Literal["done"]
     message_id: str = Field(alias="messageId")
 
 
-class ErrorEvent(ChatStreamEventBase):
+class ErrorEvent(FrontendModel):
     type: Literal["error"]
     message_id: str | None = Field(default=None, alias="messageId")
     message: str
 
 
-class ToolCallEvent(ChatStreamEventBase):
+class ToolCallEvent(FrontendModel):
     type: Literal["tool_call"]
     message_id: str = Field(alias="messageId")
     invocation: ToolInvocation
 
 
-class ToolResultEvent(ChatStreamEventBase):
+class ToolResultEvent(FrontendModel):
     type: Literal["tool_result"]
     message_id: str = Field(alias="messageId")
     invocation: ToolInvocation
 
 
-class TitleEvent(ChatStreamEventBase):
+class TitleEvent(FrontendModel):
     type: Literal["title"]
     conversation_id: str = Field(alias="conversationId")
     title: str
 
 
-ChatStreamEvent = Annotated[
+ChatStreamResponse = Annotated[
     MessageCreatedEvent
     | ReasoningEvent
     | DeltaEvent
@@ -141,3 +137,5 @@ ChatStreamEvent = Annotated[
     | TitleEvent,
     Field(discriminator="type"),
 ]
+
+ChatStreamEvent = ChatStreamResponse
