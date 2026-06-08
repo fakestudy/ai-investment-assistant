@@ -91,7 +91,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
                     type="content_block_start",
                     content_block=ToolResultBlock(
                         tool_use_id="sdk-tool-1",
-                        content={"price": 100},
+                        content='{"price": 100}',
                         is_error=False,
                     ),
                 ),
@@ -143,6 +143,61 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(part.order_index, 0)
         self.assertEqual(part.tool_invocation_id, "sdk-tool-1")
 
+    async def test_stream_chat_projects_text_tool_result_blocks_from_sdk_events(self) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            yield SimpleNamespace(
+                event=SimpleNamespace(
+                    type="content_block_start",
+                    content_block=ToolUseBlock(
+                        id="sdk-tool-1",
+                        name="get_quote",
+                        input={"symbol": "AAPL"},
+                    ),
+                ),
+            )
+            yield SimpleNamespace(
+                event=SimpleNamespace(
+                    type="content_block_start",
+                    content_block=ToolResultBlock(
+                        tool_use_id="sdk-tool-1",
+                        content=[{"type": "text", "text": '{"price": 100}'}],
+                        is_error=False,
+                    ),
+                ),
+            )
+
+        async def fake_get_agent_session_by_conversation_id(session, conversation_id):
+            return None
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+            patch.object(
+                chat_service,
+                "get_agent_session_by_conversation_id",
+                fake_get_agent_session_by_conversation_id,
+            ),
+        ):
+            events = [
+                _decode_sse(frame)
+                async for frame in chat_service.stream_chat(
+                    conversation_id="conversation-1",
+                    message="quote aapl",
+                )
+            ]
+
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+        self.assertEqual(events[2]["invocation"]["result"], {"price": 100})
+        self.assertEqual(
+            factory.session.messages["_tool_invocations"]["sdk-tool-1"].result,
+            {"price": 100},
+        )
+
     async def test_stream_chat_preserves_reasoning_timeline_around_tool_events(self) -> None:
         from schema.chat import ChatStreamResponse
         from service import chat as chat_service
@@ -177,7 +232,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
                     type="content_block_start",
                     content_block=ToolResultBlock(
                         tool_use_id="sdk-tool-1",
-                        content={"price": 100},
+                        content='{"price": 100}',
                         is_error=False,
                     ),
                 ),
@@ -232,6 +287,83 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parts[0].text, "before tool")
         self.assertEqual(parts[1].tool_invocation_id, "sdk-tool-1")
         self.assertEqual(parts[2].text, "after tool")
+
+    async def test_stream_chat_splits_reasoning_when_tool_result_has_no_tool_call_event(
+        self,
+    ) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+        factory.session.messages.setdefault("_tool_invocations", {})[
+            "sdk-tool-1"
+        ] = ToolInvocation(
+            id="sdk-tool-1",
+            message_id="assistant-placeholder",
+            tool_name="get_quote",
+            args={"symbol": "AAPL"},
+            result=None,
+            error=None,
+            latency_ms=None,
+            status="running",
+            created_at=datetime(2026, 6, 8, 4, 0, tzinfo=UTC),
+        )
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            yield SimpleNamespace(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "thinking_delta", "thinking": "before"},
+                },
+            )
+            yield SimpleNamespace(
+                event=SimpleNamespace(
+                    type="content_block_start",
+                    content_block=ToolResultBlock(
+                        tool_use_id="sdk-tool-1",
+                        content='{"price": 100}',
+                        is_error=False,
+                    ),
+                ),
+            )
+            yield SimpleNamespace(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "thinking_delta", "thinking": "after"},
+                },
+            )
+
+        async def fake_get_agent_session_by_conversation_id(session, conversation_id):
+            return None
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+            patch.object(
+                chat_service,
+                "get_agent_session_by_conversation_id",
+                fake_get_agent_session_by_conversation_id,
+            ),
+        ):
+            events = [
+                _decode_sse(frame)
+                async for frame in chat_service.stream_chat(
+                    conversation_id="conversation-1",
+                    message="quote aapl",
+                )
+            ]
+
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["message_created", "reasoning", "tool_result", "reasoning", "done"],
+        )
+        parts = sorted(
+            factory.session.messages["_message_parts"].values(),
+            key=lambda part: part.order_index,
+        )
+        self.assertEqual([part.type for part in parts], ["reasoning", "reasoning"])
+        self.assertEqual([part.text for part in parts], ["before", "after"])
 
     async def test_stream_chat_generates_title_event_and_updates_conversation(self) -> None:
         from schema.chat import ChatStreamResponse

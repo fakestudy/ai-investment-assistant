@@ -164,6 +164,8 @@ async def stream_chat(
                         invocation=_project_tool_invocation(invocation),
                     )
                 )
+                reasoning_part_id = None
+                current_reasoning_part_text = ""
 
             text_deltas = (
                 _extract_text_deltas(sdk_message)
@@ -465,7 +467,36 @@ def _extract_tool_result_payload(block: Any) -> Any | None:
     result = _read_value(block, "result")
     if result is not None:
         return result
-    return _read_value(block, "content")
+    return _normalize_tool_result_content(_read_value(block, "content"))
+
+
+def _normalize_tool_result_content(content: Any) -> Any | None:
+    if isinstance(content, str):
+        return _parse_json_string(content)
+
+    if isinstance(content, list):
+        text_values = [
+            item.get("text")
+            for item in content
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+            )
+        ]
+        if len(text_values) == 1:
+            return _parse_json_string(text_values[0])
+        if text_values:
+            return [_parse_json_string(text) for text in text_values]
+
+    return content
+
+
+def _parse_json_string(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
 
 
 def _extract_tool_result_error(block: Any) -> str | None:
