@@ -81,6 +81,7 @@ async def stream_chat(
 
     content = ""
     reasoning = ""
+    current_reasoning_part_text = ""
     has_partial_text = False
     has_partial_thinking = False
     next_order_index = 0
@@ -111,10 +112,11 @@ async def stream_chat(
                 has_partial_thinking = True
             for text in thinking_deltas:
                 reasoning += text
+                current_reasoning_part_text += text
                 reasoning_part_id, next_order_index = await _persist_reasoning_delta(
                     message_id=assistant_message_id,
                     part_id=reasoning_part_id,
-                    text=reasoning,
+                    text=current_reasoning_part_text,
                     order_index=next_order_index,
                 )
                 yield _to_sse(
@@ -134,6 +136,8 @@ async def stream_chat(
                     args=tool_call["args"],
                     order_index=next_order_index,
                 )
+                reasoning_part_id = None
+                current_reasoning_part_text = ""
                 tool_invocation_started_at[invocation.id] = datetime.now(UTC)
                 yield _to_sse(
                     ToolCallEvent(
