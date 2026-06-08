@@ -18,15 +18,16 @@ async def update_message(
     content: str,
     reasoning: str,
     status: str,
-) -> None:
+) -> Message:
     message = await session.get(Message, message_id)
     if message is None:
-        return
+        raise LookupError(f"Message not found: {message_id}")
 
     message.content = content
     message.reasoning = reasoning
     message.status = status
     await session.flush()
+    return message
 
 
 async def get_message_by_id(session: AsyncSession, message_id: str) -> Message | None:

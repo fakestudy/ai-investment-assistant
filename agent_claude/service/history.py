@@ -63,6 +63,14 @@ def _to_timeline_part(
     part: MessagePart,
     invocation_by_id: dict[str, ToolInvocation],
 ) -> ChatTimelinePart | None:
+    if part.type == "reasoning":
+        return ReasoningTimelinePart(
+            id=part.id,
+            type="reasoning",
+            order_index=part.order_index,
+            text=part.text,
+        )
+
     if part.type == "tool":
         invocation_id = getattr(part, "tool_invocation_id", None)
         invocation = invocation_by_id.get(invocation_id)
@@ -75,12 +83,7 @@ def _to_timeline_part(
             invocation=_to_tool_invocation(invocation),
         )
 
-    return ReasoningTimelinePart(
-        id=part.id,
-        type="reasoning",
-        order_index=part.order_index,
-        text=part.text,
-    )
+    return None
 
 
 def _to_tool_invocation(invocation: ToolInvocation) -> ToolInvocationSchema:

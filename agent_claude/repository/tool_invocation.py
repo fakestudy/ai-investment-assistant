@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.tool_invocation import ToolInvocation
 
+_UNSET = object()
+
 
 async def create_tool_invocation(
     session: AsyncSession,
@@ -17,20 +19,24 @@ async def update_tool_invocation(
     session: AsyncSession,
     *,
     invocation_id: str,
-    result: object | None = None,
-    error: str | None = None,
-    latency_ms: int | None = None,
+    result: object | None = _UNSET,
+    error: str | None = _UNSET,
+    latency_ms: int | None = _UNSET,
     status: str,
-) -> None:
+) -> ToolInvocation:
     invocation = await session.get(ToolInvocation, invocation_id)
     if invocation is None:
-        return
+        raise LookupError(f"Tool invocation not found: {invocation_id}")
 
-    invocation.result = result
-    invocation.error = error
-    invocation.latency_ms = latency_ms
+    if result is not _UNSET:
+        invocation.result = result
+    if error is not _UNSET:
+        invocation.error = error
+    if latency_ms is not _UNSET:
+        invocation.latency_ms = latency_ms
     invocation.status = status
     await session.flush()
+    return invocation
 
 
 async def get_tool_invocation_by_id(

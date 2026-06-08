@@ -18,13 +18,14 @@ async def update_message_part_text(
     *,
     part_id: str,
     text: str,
-) -> None:
+) -> MessagePart:
     message_part = await session.get(MessagePart, part_id)
     if message_part is None:
-        return
+        raise LookupError(f"Message part not found: {part_id}")
 
     message_part.text = text
     await session.flush()
+    return message_part
 
 
 async def get_message_parts_by_message_id(

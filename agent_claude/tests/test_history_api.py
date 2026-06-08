@@ -51,6 +51,22 @@ class HistoryProjectionTest(unittest.TestCase):
         self.assertEqual(message.status, "done")
         self.assertTrue(session.flushed)
 
+    def test_update_message_raises_when_not_found(self) -> None:
+        session = FakeSession({})
+
+        async def run() -> None:
+            await update_message(
+                session,
+                message_id="missing-message",
+                content="回答内容",
+                reasoning="推理内容",
+                status="done",
+            )
+
+        with self.assertRaises(LookupError):
+            asyncio.run(run())
+        self.assertFalse(session.flushed)
+
     def test_update_tool_invocation_updates_result_error_latency_and_status(self) -> None:
         from model.tool_invocation import ToolInvocation
 
@@ -80,6 +96,74 @@ class HistoryProjectionTest(unittest.TestCase):
         self.assertEqual(invocation.status, "completed")
         self.assertTrue(session.flushed)
 
+    def test_update_tool_invocation_preserves_unpassed_fields(self) -> None:
+        from model.tool_invocation import ToolInvocation
+
+        invocation = SimpleNamespace(
+            result={"price": 100},
+            error="timeout",
+            latency_ms=99,
+            status="running",
+        )
+        session = FakeSession({(ToolInvocation, "tool-1"): invocation})
+
+        async def run() -> None:
+            await update_tool_invocation(
+                session,
+                invocation_id="tool-1",
+                status="completed",
+            )
+
+        asyncio.run(run())
+
+        self.assertEqual(invocation.result, {"price": 100})
+        self.assertEqual(invocation.error, "timeout")
+        self.assertEqual(invocation.latency_ms, 99)
+        self.assertEqual(invocation.status, "completed")
+        self.assertTrue(session.flushed)
+
+    def test_update_tool_invocation_can_clear_result_and_error(self) -> None:
+        from model.tool_invocation import ToolInvocation
+
+        invocation = SimpleNamespace(
+            result={"price": 100},
+            error="timeout",
+            latency_ms=99,
+            status="running",
+        )
+        session = FakeSession({(ToolInvocation, "tool-1"): invocation})
+
+        async def run() -> None:
+            await update_tool_invocation(
+                session,
+                invocation_id="tool-1",
+                result=None,
+                error=None,
+                status="completed",
+            )
+
+        asyncio.run(run())
+
+        self.assertIsNone(invocation.result)
+        self.assertIsNone(invocation.error)
+        self.assertEqual(invocation.latency_ms, 99)
+        self.assertEqual(invocation.status, "completed")
+        self.assertTrue(session.flushed)
+
+    def test_update_tool_invocation_raises_when_not_found(self) -> None:
+        session = FakeSession({})
+
+        async def run() -> None:
+            await update_tool_invocation(
+                session,
+                invocation_id="missing-tool",
+                status="completed",
+            )
+
+        with self.assertRaises(LookupError):
+            asyncio.run(run())
+        self.assertFalse(session.flushed)
+
     def test_update_message_part_text_updates_text(self) -> None:
         from model.message_part import MessagePart
 
@@ -97,6 +181,20 @@ class HistoryProjectionTest(unittest.TestCase):
 
         self.assertEqual(message_part.text, "增量文本")
         self.assertTrue(session.flushed)
+
+    def test_update_message_part_text_raises_when_not_found(self) -> None:
+        session = FakeSession({})
+
+        async def run() -> None:
+            await update_message_part_text(
+                session,
+                part_id="missing-part",
+                text="增量文本",
+            )
+
+        with self.assertRaises(LookupError):
+            asyncio.run(run())
+        self.assertFalse(session.flushed)
 
     def test_schema_serializes_frontend_history_aliases(self) -> None:
         response = ConversationMessagesResponse(
@@ -315,6 +413,50 @@ class HistoryProjectionTest(unittest.TestCase):
         ]
 
         self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["type"], "reasoning")
+
+    def test_projection_skips_unknown_and_approval_timeline_part_types(self) -> None:
+        message = SimpleNamespace(
+            id="assistant-1",
+            conversation_id="conversation-1",
+            role="assistant",
+            content="",
+            reasoning="",
+            status="done",
+            created_at=datetime(2026, 6, 8, 4, 0, tzinfo=UTC),
+            tool_invocations=[],
+            timeline_parts=[
+                SimpleNamespace(
+                    id="part-reasoning",
+                    type="reasoning",
+                    order_index=0,
+                    text="kept",
+                    tool_invocation_id=None,
+                ),
+                SimpleNamespace(
+                    id="part-approval",
+                    type="approval",
+                    order_index=1,
+                    text="should skip",
+                    tool_invocation_id=None,
+                ),
+                SimpleNamespace(
+                    id="part-unknown",
+                    type="custom",
+                    order_index=2,
+                    text="should skip",
+                    tool_invocation_id=None,
+                ),
+            ],
+        )
+
+        response = project_conversation_messages([message])
+        parts = response.model_dump(by_alias=True, exclude_none=True)["messages"][0][
+            "timelineParts"
+        ]
+
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["id"], "part-reasoning")
         self.assertEqual(parts[0]["type"], "reasoning")
 
 
