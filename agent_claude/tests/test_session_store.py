@@ -48,16 +48,31 @@ class _FakeAsyncSession:
         sql = str(statement)
         params = statement.compile().params
         if "FROM agent_session_entries" in sql:
+            project_key = params["project_key_1"]
             sdk_session_id = params["sdk_session_id_1"]
+            subpath = params["subpath_1"]
+            is_entry_uuid_lookup = (
+                "SELECT agent_session_entries.entry_uuid" in sql
+                and "agent_session_entries.entry_payload" not in sql
+            )
             entries = [
                 row
                 for row in self._rows["entries"]
-                if row.sdk_session_id == sdk_session_id
+                if row.project_key == project_key
+                and row.sdk_session_id == sdk_session_id
+                and row.subpath == subpath
             ]
+            if is_entry_uuid_lookup:
+                entry_uuid_values = set(params["entry_uuid_1"])
+                entries = [
+                    row for row in entries if row.entry_uuid in entry_uuid_values
+                ]
             entries.sort(key=lambda row: row.sequence_no)
             if "agent_session_entries.sequence_no" in sql and "DESC" in sql:
                 rows = [entries[-1].sequence_no] if entries else []
                 return _Result(rows)
+            if is_entry_uuid_lookup:
+                return _Result([row.entry_uuid for row in entries])
             return _Result(entries)
         if "FROM agent_sessions" in sql:
             conversation_id = params["conversation_id_1"]
@@ -115,6 +130,45 @@ class SessionStoreContractTest(unittest.IsolatedAsyncioTestCase):
             [
                 {"type": "user", "text": "hello"},
                 {"type": "assistant", "text": "world"},
+            ],
+        )
+
+    async def test_repeated_append_with_same_entry_uuid_is_idempotent(self) -> None:
+        store = PostgresSessionStore(session_factory=_FakeSessionFactory())
+        key = {"project_key": "project-a", "session_id": "session-1"}
+        entries = [{"uuid": "entry-1", "type": "user", "text": "hello"}]
+
+        await store.append(key, entries)
+        await store.append(key, entries)
+
+        loaded = await store.load(key)
+
+        self.assertEqual(loaded, entries)
+
+    async def test_append_with_different_entry_uuids_preserves_order(self) -> None:
+        store = PostgresSessionStore(session_factory=_FakeSessionFactory())
+        key = {
+            "project_key": "project-a",
+            "session_id": "session-1",
+            "subpath": "workspace-a",
+        }
+
+        await store.append(
+            key,
+            [{"uuid": "entry-1", "type": "user", "text": "hello"}],
+        )
+        await store.append(
+            key,
+            [{"uuid": "entry-2", "type": "assistant", "text": "world"}],
+        )
+
+        loaded = await store.load(key)
+
+        self.assertEqual(
+            loaded,
+            [
+                {"uuid": "entry-1", "type": "user", "text": "hello"},
+                {"uuid": "entry-2", "type": "assistant", "text": "world"},
             ],
         )
 

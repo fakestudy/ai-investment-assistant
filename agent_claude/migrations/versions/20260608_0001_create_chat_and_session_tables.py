@@ -124,8 +124,11 @@ def upgrade() -> None:
     op.create_table(
         "agent_session_entries",
         sa.Column("id", sa.String(), nullable=False),
+        sa.Column("project_key", sa.String(), nullable=False),
         sa.Column("sdk_session_id", sa.String(), nullable=False),
+        sa.Column("subpath", sa.String(), nullable=False),
         sa.Column("sequence_no", sa.Integer(), nullable=False),
+        sa.Column("entry_uuid", sa.String(), nullable=True),
         sa.Column("entry_payload", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -139,12 +142,22 @@ def upgrade() -> None:
     op.create_index(
         "ix_agent_session_entries_session_sequence",
         "agent_session_entries",
-        ["sdk_session_id", "sequence_no"],
+        ["project_key", "sdk_session_id", "subpath", "sequence_no"],
+        unique=True,
+    )
+    op.create_index(
+        "ix_agent_session_entries_session_entry_uuid",
+        "agent_session_entries",
+        ["project_key", "sdk_session_id", "subpath", "entry_uuid"],
         unique=True,
     )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_agent_session_entries_session_entry_uuid",
+        table_name="agent_session_entries",
+    )
     op.drop_index(
         "ix_agent_session_entries_session_sequence",
         table_name="agent_session_entries",
