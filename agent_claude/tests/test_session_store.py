@@ -37,6 +37,7 @@ class _FakeAsyncSession:
     def __init__(self, rows):
         self._rows = rows
         self.committed = False
+        self.lock_statements = rows.setdefault("lock_statements", [])
 
     async def __aenter__(self):
         return self
@@ -44,8 +45,24 @@ class _FakeAsyncSession:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def execute(self, statement):
+    async def execute(self, statement, parameters=None):
         sql = str(statement)
+        if "pg_advisory_xact_lock" in sql:
+            self.lock_statements.append(sql)
+            return _Result([])
+        if "INSERT INTO agent_session_entries" in sql:
+            for values in statement._multi_values[0]:
+                row_values = {column.key: value for column, value in values.items()}
+                if row_values["entry_uuid"] is not None and any(
+                    row.project_key == row_values["project_key"]
+                    and row.sdk_session_id == row_values["sdk_session_id"]
+                    and row.subpath == row_values["subpath"]
+                    and row.entry_uuid == row_values["entry_uuid"]
+                    for row in self._rows["entries"]
+                ):
+                    continue
+                self._rows["entries"].append(AgentSessionEntry(**row_values))
+            return _Result([])
         params = statement.compile().params
         if "FROM agent_session_entries" in sql:
             project_key = params["project_key_1"]
@@ -102,7 +119,7 @@ class _FakeAsyncSession:
 
 class _FakeSessionFactory:
     def __init__(self):
-        self.rows = {"entries": [], "sessions": []}
+        self.rows = {"entries": [], "sessions": [], "lock_statements": []}
 
     def __call__(self):
         return _FakeAsyncSession(self.rows)
@@ -132,6 +149,18 @@ class SessionStoreContractTest(unittest.IsolatedAsyncioTestCase):
                 {"type": "assistant", "text": "world"},
             ],
         )
+
+    async def test_append_takes_per_session_advisory_transaction_lock(self) -> None:
+        factory = _FakeSessionFactory()
+        store = PostgresSessionStore(session_factory=factory)
+
+        await store.append(
+            {"project_key": "project-a", "session_id": "session-1"},
+            [{"uuid": "entry-1", "type": "user", "text": "hello"}],
+        )
+
+        self.assertEqual(len(factory.rows["lock_statements"]), 1)
+        self.assertIn("pg_advisory_xact_lock", factory.rows["lock_statements"][0])
 
     async def test_repeated_append_with_same_entry_uuid_is_idempotent(self) -> None:
         store = PostgresSessionStore(session_factory=_FakeSessionFactory())

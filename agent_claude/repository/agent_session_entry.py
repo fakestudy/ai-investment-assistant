@@ -2,10 +2,29 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.agent_session_entry import AgentSessionEntry
+
+
+async def _lock_session_entries(
+    session: AsyncSession,
+    *,
+    project_key: str,
+    sdk_session_id: str,
+    subpath: str,
+) -> None:
+    lock_key = (
+        f"{len(project_key)}:{project_key}"
+        f"{len(sdk_session_id)}:{sdk_session_id}"
+        f"{len(subpath)}:{subpath}"
+    )
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": lock_key},
+    )
 
 
 async def append_session_entries(
@@ -20,6 +39,12 @@ async def append_session_entries(
         return
 
     normalized_subpath = subpath or ""
+    await _lock_session_entries(
+        session,
+        project_key=project_key,
+        sdk_session_id=sdk_session_id,
+        subpath=normalized_subpath,
+    )
     entry_uuids = {
         payload["uuid"]
         for payload in payloads
@@ -50,6 +75,7 @@ async def append_session_entries(
     last_sequence = result.scalar_one_or_none() or 0
     now = datetime.now(UTC)
     next_sequence = last_sequence
+    rows: list[dict[str, Any]] = []
     for payload in payloads:
         entry_uuid = payload.get("uuid")
         if not isinstance(entry_uuid, str) or not entry_uuid:
@@ -57,21 +83,33 @@ async def append_session_entries(
         if entry_uuid in existing_entry_uuids:
             continue
         next_sequence += 1
-        session.add(
-            AgentSessionEntry(
-                id=str(uuid4()),
-                project_key=project_key,
-                sdk_session_id=sdk_session_id,
-                subpath=normalized_subpath,
-                sequence_no=next_sequence,
-                entry_uuid=entry_uuid,
-                entry_payload=payload,
-                created_at=now,
-            )
+        rows.append(
+            {
+                "id": str(uuid4()),
+                "project_key": project_key,
+                "sdk_session_id": sdk_session_id,
+                "subpath": normalized_subpath,
+                "sequence_no": next_sequence,
+                "entry_uuid": entry_uuid,
+                "entry_payload": payload,
+                "created_at": now,
+            }
         )
         if entry_uuid:
             existing_entry_uuids.add(entry_uuid)
-    await session.flush()
+    if rows:
+        await session.execute(
+            insert(AgentSessionEntry)
+            .values(rows)
+            .on_conflict_do_nothing(
+                index_elements=[
+                    "project_key",
+                    "sdk_session_id",
+                    "subpath",
+                    "entry_uuid",
+                ]
+            )
+        )
 
 
 async def load_session_entries(

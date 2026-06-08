@@ -28,22 +28,18 @@ SYSTEM_PROMPT = (
 
 def _anthropic_env() -> dict[str, str]:
     settings = get_settings()
-    env: dict[str, str] = {}
+    env: dict[str, str] = {
+        name: value
+        for name, value in os.environ.items()
+        if name.startswith("ANTHROPIC_")
+    }
     if settings.anthropic_base_url:
         env["ANTHROPIC_BASE_URL"] = settings.anthropic_base_url
     if settings.anthropic_auth_token:
         env["ANTHROPIC_AUTH_TOKEN"] = settings.anthropic_auth_token
         env["ANTHROPIC_API_KEY"] = settings.anthropic_auth_token
-
-    for name in (
-        "ANTHROPIC_SMALL_FAST_MODEL",
-        "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
-        "ANTHROPIC_VERTEX_PROJECT_ID",
-        "ANTHROPIC_VERTEX_REGION",
-    ):
-        value = os.environ.get(name)
-        if value:
-            env[name] = value
+    if settings.anthropic_model:
+        env["ANTHROPIC_MODEL"] = settings.anthropic_model
     return env
 
 
