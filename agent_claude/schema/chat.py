@@ -7,6 +7,27 @@ class FrontendModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
+class ChatConversation(FrontendModel):
+    id: str
+    title: str
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class UpdateConversationTitleRequest(BaseModel):
+    conversation_id: str
+    title: str
+
+
+class DeleteConversationRequest(BaseModel):
+    conversation_id: str
+
+
+class DeleteConversationResponse(FrontendModel):
+    conversation_id: str = Field(alias="conversationId")
+    deleted: bool
+
+
 class ToolInvocation(FrontendModel):
     id: str
     message_id: str = Field(alias="messageId")
@@ -82,46 +103,54 @@ class StreamChatRequest(FrontendModel):
 
 class MessageCreatedEvent(FrontendModel):
     type: Literal["message_created"]
+    run_id: str | None = Field(default=None, alias="runId")
     message: ChatMessage
 
 
 class ReasoningEvent(FrontendModel):
     type: Literal["reasoning"]
+    run_id: str | None = Field(default=None, alias="runId")
     message_id: str = Field(alias="messageId")
     text: str
 
 
 class DeltaEvent(FrontendModel):
     type: Literal["delta"]
+    run_id: str | None = Field(default=None, alias="runId")
     message_id: str = Field(alias="messageId")
     text: str
 
 
 class DoneEvent(FrontendModel):
     type: Literal["done"]
+    run_id: str | None = Field(default=None, alias="runId")
     message_id: str = Field(alias="messageId")
 
 
 class ErrorEvent(FrontendModel):
     type: Literal["error"]
+    run_id: str | None = Field(default=None, alias="runId")
     message_id: str | None = Field(default=None, alias="messageId")
     message: str
 
 
 class ToolCallEvent(FrontendModel):
     type: Literal["tool_call"]
+    run_id: str | None = Field(default=None, alias="runId")
     message_id: str = Field(alias="messageId")
     invocation: ToolInvocation
 
 
 class ToolResultEvent(FrontendModel):
     type: Literal["tool_result"]
+    run_id: str | None = Field(default=None, alias="runId")
     message_id: str = Field(alias="messageId")
     invocation: ToolInvocation
 
 
 class TitleEvent(FrontendModel):
     type: Literal["title"]
+    run_id: str | None = Field(default=None, alias="runId")
     conversation_id: str = Field(alias="conversationId")
     title: str
 

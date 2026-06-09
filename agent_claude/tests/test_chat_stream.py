@@ -1138,6 +1138,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         tool_call = adapter.validate_python(
             {
                 "type": "tool_call",
+                "runId": "legacy-run-id",
                 "messageId": "assistant-1",
                 "invocation": {
                     "id": "tool-1",
@@ -1157,6 +1158,7 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(message_created.type, "message_created")
+        self.assertEqual(tool_call.run_id, "legacy-run-id")
         self.assertEqual(tool_call.type, "tool_call")
         self.assertEqual(title.type, "title")
 

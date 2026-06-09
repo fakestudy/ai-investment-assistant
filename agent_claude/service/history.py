@@ -6,12 +6,22 @@ from model.tool_invocation import ToolInvocation
 from repository.message import get_messages_by_conversation_id
 from schema.chat import (
     ChatMessage,
+    ChatConversation,
     ChatTimelinePart,
     ConversationMessagesResponse,
     ReasoningTimelinePart,
     ToolInvocation as ToolInvocationSchema,
     ToolTimelinePart,
 )
+
+
+def project_conversation(conversation) -> ChatConversation:
+    return ChatConversation(
+        id=conversation.id,
+        title=conversation.title,
+        created_at=_format_datetime(conversation.created_at),
+        updated_at=_format_datetime(conversation.updated_at),
+    )
 
 
 async def get_conversation_messages(session, *, conversation_id: str) -> ConversationMessagesResponse:
