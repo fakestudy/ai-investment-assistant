@@ -18,6 +18,21 @@ from model.tool_invocation import ToolInvocation
 class _FakeSession:
     def __init__(self) -> None:
         self.messages: dict[str, Message] = {}
+        now = datetime(2026, 6, 8, 4, 0, tzinfo=UTC)
+        self.conversations: dict[str, Conversation] = {
+            "conversation-1": Conversation(
+                id="conversation-1",
+                title="Conversation",
+                created_at=now,
+                updated_at=now,
+            ),
+            "conversation-title": Conversation(
+                id="conversation-title",
+                title="Conversation",
+                created_at=now,
+                updated_at=now,
+            ),
+        }
         self.commits = 0
 
     async def __aenter__(self):
@@ -27,6 +42,9 @@ class _FakeSession:
         return False
 
     def add(self, row) -> None:
+        if isinstance(row, Conversation):
+            self.conversations[row.id] = row
+            return
         if isinstance(row, Message):
             self.messages[row.id] = row
             return
@@ -39,6 +57,8 @@ class _FakeSession:
         raise AssertionError(f"unexpected row type: {type(row)!r}")
 
     async def get(self, model, object_id: str):
+        if model is Conversation:
+            return self.conversations.get(object_id)
         if model is Message:
             return self.messages.get(object_id)
         if model is ToolInvocation:
@@ -52,6 +72,10 @@ class _FakeSession:
 
     async def commit(self) -> None:
         self.commits += 1
+
+
+async def _fake_get_conversation_by_id(session: _FakeSession, conversation_id: str):
+    return await session.get(Conversation, conversation_id)
 
 
 class _FakeSessionFactory:
@@ -69,6 +93,38 @@ def _decode_sse(frame: str) -> dict:
 
 
 class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_chat_yields_error_when_conversation_is_missing(self) -> None:
+        from schema.chat import ChatStreamResponse
+        from service import chat as chat_service
+
+        factory = _FakeSessionFactory()
+
+        async def fake_stream_query(*, prompt, session_store, resume):
+            raise AssertionError("stream_query should not run for a missing conversation")
+            yield
+
+        with (
+            patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
+            patch.object(chat_service, "stream_query", fake_stream_query),
+        ):
+            events = [
+                _decode_sse(frame)
+                async for frame in chat_service.stream_chat(
+                    conversation_id="missing-conversation",
+                    message="hello",
+                )
+            ]
+
+        TypeAdapter(list[ChatStreamResponse]).validate_python(events)
+        self.assertEqual(events, [{"type": "error", "message": "Conversation not found"}])
+        self.assertEqual(factory.session.messages, {})
+        self.assertEqual(factory.session.commits, 0)
+
     async def test_stream_chat_projects_tool_call_and_result_from_sdk_events(self) -> None:
         from schema.chat import ChatStreamResponse
         from service import chat as chat_service
@@ -102,6 +158,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -178,6 +239,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -249,6 +315,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -306,6 +377,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -377,6 +453,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -428,6 +509,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -490,6 +576,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -568,6 +659,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -657,6 +753,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -714,6 +815,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -785,6 +891,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -840,6 +951,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -896,6 +1012,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -948,6 +1069,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -974,8 +1100,12 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def test_controller_returns_text_event_stream_response(self) -> None:
         from controller.chat import run_stream_chat
+        from main import app
         from schema.chat import StreamChatRequest
         from starlette.responses import StreamingResponse
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/chat/stream", paths)
 
         response = asyncio.run(
             run_stream_chat(
@@ -1059,6 +1189,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,
@@ -1112,6 +1247,11 @@ class ChatStreamServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(chat_service, "AsyncSessionLocal", factory),
+            patch.object(
+                chat_service,
+                "get_conversation_by_id",
+                _fake_get_conversation_by_id,
+            ),
             patch.object(chat_service, "stream_query", fake_stream_query),
             patch.object(
                 chat_service,

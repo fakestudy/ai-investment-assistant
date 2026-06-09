@@ -1,7 +1,9 @@
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from schema.chat import StreamChatRequest
+from core.database import AsyncSessionLocal
+from schema.chat import ConversationMessagesResponse, StreamChatRequest
 from service.chat import stream_chat
+from service import history
 
 
 async def run_stream_chat(req: StreamChatRequest) -> StreamingResponse:
@@ -13,3 +15,12 @@ async def run_stream_chat(req: StreamChatRequest) -> StreamingResponse:
         ),
         media_type="text/event-stream",
     )
+
+
+async def get_conversation_messages(conversation_id: str) -> ConversationMessagesResponse:
+    async with AsyncSessionLocal() as session:
+        response = await history.get_conversation_messages(
+            session=session,
+            conversation_id=conversation_id,
+        )
+    return JSONResponse(response.model_dump(by_alias=True, exclude_none=True))

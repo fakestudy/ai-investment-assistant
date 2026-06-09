@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from core.database import AsyncSessionLocal
+from model.conversation import Conversation
 from model.message_part import MessagePart
 from model.message import Message
 from model.tool_invocation import ToolInvocation
@@ -12,7 +13,7 @@ from repository.agent_session import (
     get_agent_session_by_conversation_id,
     upsert_agent_session,
 )
-from repository.conversation import update_conversation_title
+from repository.conversation import get_conversation_by_id, update_conversation_title
 from repository.message import create_message, update_message
 from repository.message_part import create_message_part, update_message_part_text
 from repository.tool_invocation import create_tool_invocation, update_tool_invocation
@@ -58,6 +59,17 @@ async def stream_chat(
     now = datetime.now(UTC)
 
     async with AsyncSessionLocal() as session:
+        conversation = await _get_conversation_or_none(session, conversation_id)
+        if conversation is None:
+            yield _to_sse(
+                ErrorEvent(
+                    type="error",
+                    message_id=None,
+                    message="Conversation not found",
+                )
+            )
+            return
+
         await create_message(
             session,
             Message(
@@ -285,6 +297,10 @@ async def stream_chat(
                 message=str(exc) or exc.__class__.__name__,
             )
         )
+
+
+async def _get_conversation_or_none(session: Any, conversation_id: str) -> Any | None:
+    return await get_conversation_by_id(session, conversation_id)
 
 
 async def _persist_reasoning_delta(

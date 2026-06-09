@@ -2,7 +2,9 @@ import asyncio
 import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
 
 from repository.message import update_message
@@ -29,6 +31,62 @@ class FakeSession:
 
 
 class HistoryProjectionTest(unittest.TestCase):
+    def test_app_registers_frontend_compatible_messages_route(self) -> None:
+        from main import app
+
+        paths = {route.path for route in app.routes}
+
+        self.assertIn("/api/conversation/messages/{conversation_id}", paths)
+
+    def test_history_route_returns_projected_messages(self) -> None:
+        from main import app
+
+        class FakeSessionContext:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def fake_get_messages(session, *, conversation_id: str):
+            return ConversationMessagesResponse(
+                messages=[
+                    {
+                        "id": "assistant-1",
+                        "conversationId": conversation_id,
+                        "role": "assistant",
+                        "content": "hello",
+                        "status": "done",
+                        "createdAt": "2026-06-08T04:00:00Z",
+                    }
+                ],
+            )
+
+        with (
+            patch("controller.chat.AsyncSessionLocal", lambda: FakeSessionContext()),
+            patch("service.history.get_conversation_messages", fake_get_messages),
+        ):
+            response = TestClient(app).get("/api/conversation/messages/conversation-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "messages": [
+                    {
+                        "id": "assistant-1",
+                        "conversationId": "conversation-1",
+                        "role": "assistant",
+                        "content": "hello",
+                        "toolInvocations": [],
+                        "timelineParts": [],
+                        "status": "done",
+                        "createdAt": "2026-06-08T04:00:00Z",
+                    }
+                ],
+            },
+        )
+
     def test_update_message_updates_projection_fields(self) -> None:
         from model.message import Message
 
