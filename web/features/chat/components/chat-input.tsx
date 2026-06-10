@@ -52,7 +52,7 @@ export function ChatInput() {
 		<footer className="shrink-0 bg-white px-6 pt-4 pb-5">
 			<div className="mx-auto w-full max-w-6xl">
 				<form
-					className="rounded-3xl border border-zinc-200 bg-white p-2 shadow-[0_14px_44px_rgba(15,23,42,0.10)]"
+					className="rounded-3xl border border-zinc-200 bg-white shadow-[0_14px_44px_rgba(15,23,42,0.10)]"
 					onSubmit={(event) => {
 						event.preventDefault();
 						submitMessage();
