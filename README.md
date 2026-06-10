@@ -93,6 +93,25 @@ mise install       # 同步 mise.toml 锁定的工具链版本
 mise run doctor    # 打印当前 node / pnpm / go / python / buf 版本
 ```
 
+## Ink CLI
+
+本地开发环境启动后，可以用终端版聊天客户端连接同一套 `agent_claude`
+API：
+
+```bash
+cd web
+pnpm chat:cli
+```
+
+默认连接 `http://127.0.0.1:3000`。如需连接其他入口：
+
+```bash
+AIA_API_BASE_URL=http://127.0.0.1:3000 pnpm chat:cli
+```
+
+CLI 内支持 `/help`、`/new`、`/sessions`、`/switch <id|#>`、`/stop`、
+`/approve`、`/reject` 和 `/quit`。
+
 ## 验证命令
 
 ```bash
