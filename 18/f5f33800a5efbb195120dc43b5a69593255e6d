@@ -1,0 +1,14 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "18f5f33800a5efbb195120dc43b5a69593255e6d",
+  "prompts": {},
+  "humans": {
+    "h_de6d53c5bd872e": {
+      "author": "陈波 <2573741385@qq.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
