@@ -195,6 +195,95 @@ test("sendMessage applies early title event before stream completes", async () =
 	await new Promise((resolve) => setTimeout(resolve, 0));
 });
 
+test("regenerateLastAssistantMessage clears stale assistant content before new stream events arrive", async () => {
+	const { useChatStore } = await loadStore();
+	let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+
+		if (url.endsWith("/api/chat/stream")) {
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						streamController = controller;
+					},
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "text/event-stream" },
+				},
+			);
+		}
+
+		return new Response(
+			JSON.stringify([conversation("conversation-1", "Synced")]),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	useChatStore.setState({
+		activeConversationId: "conversation-1",
+		conversations: [conversation("conversation-1", "Local")],
+		messagesByConversationId: {
+			"conversation-1": [
+				{
+					id: "user-1",
+					conversationId: "conversation-1",
+					role: "user",
+					content: "hello",
+					status: "done",
+					createdAt: "2026-01-01T00:00:00.000Z",
+				},
+				{
+					id: "assistant-1",
+					conversationId: "conversation-1",
+					role: "assistant",
+					content: "stale answer",
+					reasoning: "stale reasoning",
+					toolInvocations: [
+						{
+							id: "tool-1",
+							messageId: "assistant-1",
+							toolName: "web_search",
+							args: { query: "stale" },
+							status: "completed",
+						},
+					],
+					timelineParts: [
+						{
+							id: "reasoning-1",
+							type: "reasoning",
+							text: "stale reasoning",
+						},
+					],
+					status: "done",
+					createdAt: "2026-01-01T00:00:01.000Z",
+				},
+			],
+		},
+	});
+
+	const regeneratePromise = useChatStore
+		.getState()
+		.regenerateLastAssistantMessage();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	const assistant =
+		useChatStore.getState().messagesByConversationId["conversation-1"]?.[1];
+	assert.equal(assistant?.content, "");
+	assert.equal(assistant?.reasoning, undefined);
+	assert.equal(assistant?.toolInvocations, undefined);
+	assert.equal(assistant?.timelineParts, undefined);
+	assert.equal(assistant?.status, "streaming");
+
+	streamController?.close();
+	await regeneratePromise;
+});
+
 test("different conversations keep independent stream controllers", async () => {
 	const { useChatStore } = await loadStore();
 	globalThis.fetch = async (input, init) => {

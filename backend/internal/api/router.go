@@ -42,7 +42,7 @@ func NewRouter(conversations *conversation.Service, chatServices ...*chat.Servic
 	api.PATCH("/messages/:messageId", handler.editMessage)
 	api.POST("/chat/stream", handler.streamChat)
 	api.GET("/chat/streams/:messageId", handler.resumeChatStream)
-	api.POST("/chat/streams/:messageId/cancel", handler.cancelChatStream)
+	api.POST("/chat/streams/cancel/:messageId", handler.cancelChatStream)
 
 	return router
 }

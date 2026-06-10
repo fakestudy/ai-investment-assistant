@@ -113,7 +113,7 @@ app.add_api_route(
     response_model=None,
 )
 app.add_api_route(
-    "/api/chat/streams/{message_id}/cancel",
+    "/api/chat/streams/cancel/{message_id}",
     _cancel_chat_stream_route,
     methods=["POST"],
     response_model=None,

@@ -118,6 +118,17 @@ const appendOptimisticUserMessage = (
 	},
 ];
 
+const resetAssistantMessageForRegeneration = (
+	message: ChatMessage,
+): ChatMessage => ({
+	...message,
+	content: "",
+	reasoning: undefined,
+	toolInvocations: undefined,
+	timelineParts: undefined,
+	status: "streaming",
+});
+
 const mergeTimelinePartsById = (
 	loadedParts: ChatMessage["timelineParts"],
 	existingParts: ChatMessage["timelineParts"],
@@ -801,9 +812,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			return;
 		}
 
+		set((state) => ({
+			messagesByConversationId: {
+				...state.messagesByConversationId,
+				[conversationId]: (
+					state.messagesByConversationId[conversationId] ?? []
+				).map((message) =>
+					message.id === lastAssistantMessage.id
+						? resetAssistantMessageForRegeneration(message)
+						: message,
+				),
+			},
+		}));
+
 		await startStream(
 			{
 				conversationId,
+				initialMessageId: lastAssistantMessage.id,
 				connect: (signal, onEvent) =>
 					streamChat(
 						{

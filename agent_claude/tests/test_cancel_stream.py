@@ -21,7 +21,7 @@ class CancelStreamApiTest(unittest.TestCase):
             fake_cancel_run_by_assistant_message_id,
         ):
             response = TestClient(app).post(
-                "/api/chat/streams/assistant-1/cancel",
+                "/api/chat/streams/cancel/assistant-1",
             )
 
         self.assertEqual(response.status_code, 204)

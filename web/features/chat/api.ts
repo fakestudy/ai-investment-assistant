@@ -168,7 +168,7 @@ export function editMessage(
 
 export async function cancelChatStream(messageId: string): Promise<void> {
 	await requestVoid(
-		`/api/chat/streams/${encodeURIComponent(messageId)}/cancel`,
+		`/api/chat/streams/cancel/${encodeURIComponent(messageId)}`,
 		{
 			method: "POST",
 		},

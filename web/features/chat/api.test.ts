@@ -161,7 +161,7 @@ test("cancelChatStream posts cancel URL", async () => {
 
 	assert.equal(
 		String(calls[0].input),
-		"http://localhost:3000/api/chat/streams/assistant-1/cancel",
+		"http://localhost:3000/api/chat/streams/cancel/assistant-1",
 	);
 	assert.equal(calls[0].init?.method, "POST");
 });

@@ -45,7 +45,7 @@ class HistoryProjectionTest(unittest.TestCase):
         self.assertIn("/api/chat/stream/resume", paths)
         self.assertIn("/api/chat/approval/decisions/{batch_id}", paths)
         self.assertIn("/api/messages/{message_id}", paths)
-        self.assertIn("/api/chat/streams/{message_id}/cancel", paths)
+        self.assertIn("/api/chat/streams/cancel/{message_id}", paths)
 
     def test_history_route_returns_projected_messages(self) -> None:
         from main import app
