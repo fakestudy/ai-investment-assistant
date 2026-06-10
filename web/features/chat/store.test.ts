@@ -937,6 +937,101 @@ test("selectConversation merges active server message parts with local streaming
 	);
 });
 
+test("selectConversation projects active approval batch into assistant timeline", async () => {
+	const { useChatStore } = await loadStore();
+
+	useChatStore.setState({
+		activeConversationId: undefined,
+		messagesByConversationId: {},
+		runsByConversationId: {},
+		controllersByConversationId: {},
+	});
+
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+
+		if (url.endsWith("/api/conversation/messages/conversation-1")) {
+			return new Response(
+				JSON.stringify({
+					messages: [
+						{
+							id: "assistant-1",
+							conversationId: "conversation-1",
+							role: "assistant",
+							content: "",
+							status: "streaming",
+							createdAt: "2026-01-01T00:00:00.000Z",
+							timelineParts: [
+								{
+									id: "tool-part-1",
+									type: "tool",
+									orderIndex: 1,
+									invocation: {
+										id: "tool-1",
+										messageId: "assistant-1",
+										toolName: "WebSearch",
+										args: { query: "Apple earnings" },
+										status: "running",
+									},
+								},
+							],
+						},
+					],
+					activeRun: {
+						runId: "run-1",
+						status: "awaiting_approval",
+						lastEventId: 42,
+						assistantMessageId: "assistant-1",
+						approvalBatch: {
+							id: "batch-1",
+							status: "pending",
+							expiresAt: "2026-01-01T00:30:00.000Z",
+							requests: [
+								{
+									id: "request-1",
+									toolInvocationId: "tool-1",
+									toolName: "WebSearch",
+									args: { query: "Apple earnings" },
+									decision: "pending",
+								},
+							],
+						},
+					},
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+
+		return new Response(
+			JSON.stringify([conversation("conversation-1", "Synced")]),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+
+	await useChatStore.getState().selectConversation("conversation-1");
+
+	const parts =
+		useChatStore.getState().messagesByConversationId["conversation-1"]?.[0]
+			?.timelineParts ?? [];
+	const approvalPart = parts.find((part) => part.type === "approval");
+
+	assert.equal(approvalPart?.type, "approval");
+	if (approvalPart?.type === "approval") {
+		assert.equal(approvalPart.batch.id, "batch-1");
+		assert.equal(approvalPart.batch.requests[0]?.toolName, "WebSearch");
+	}
+	assert.equal(
+		useChatStore.getState().runsByConversationId["conversation-1"]?.status,
+		"awaiting_approval",
+	);
+});
+
 test("selectConversation replaces stale cache when server has no active run", async () => {
 	const { useChatStore } = await loadStore();
 	useChatStore.setState({
@@ -1173,6 +1268,7 @@ test("submitApproval posts selections from run cursor and resumes stream", async
 	const { useChatStore } = await loadStore();
 	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
 		[];
+	const staleStreamController = new AbortController();
 	globalThis.fetch = async (input, init) => {
 		calls.push({ input, init });
 		const url = String(input);
@@ -1243,7 +1339,9 @@ test("submitApproval posts selections from run cursor and resumes stream", async
 				lastEventId: 42,
 			},
 		},
-		controllersByConversationId: {},
+		controllersByConversationId: {
+			"conversation-1": staleStreamController,
+		},
 	});
 
 	await useChatStore
@@ -1254,6 +1352,7 @@ test("submitApproval posts selections from run cursor and resumes stream", async
 		String(call.input).endsWith("/api/chat/approval/decisions/batch-1"),
 	);
 	assert.ok(approvalCall);
+	assert.equal(staleStreamController.signal.aborted, true);
 	assert.equal(approvalCall.init?.method, "POST");
 	assert.equal(
 		approvalCall.init?.body,

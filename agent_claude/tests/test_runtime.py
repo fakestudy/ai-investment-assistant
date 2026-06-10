@@ -60,6 +60,28 @@ class RuntimeEnvTest(unittest.TestCase):
         self.assertIs(options.can_use_tool, fake_can_use_tool)
         self.assertEqual(options.permission_mode, "default")
 
+    def test_build_options_keeps_control_channel_open_for_approval_hook(
+        self,
+    ) -> None:
+        async def fake_can_use_tool(tool_name, tool_input, context):
+            return None
+
+        with patch(
+            "service.runtime.get_settings",
+            return_value=_settings(approval_required_tools=("WebSearch",)),
+        ):
+            options = build_options(
+                session_store=cast(SessionStore, object()),
+                can_use_tool=fake_can_use_tool,
+            )
+
+        self.assertIsNotNone(options.hooks)
+        self.assertIn("PreToolUse", options.hooks or {})
+        matchers = (options.hooks or {})["PreToolUse"]
+        self.assertEqual(len(matchers), 1)
+        self.assertEqual(matchers[0].matcher, "__agent_claude_approval_keepalive__")
+        self.assertEqual(len(matchers[0].hooks), 1)
+
     def test_settings_parses_approval_required_tools(self) -> None:
         from core.config import get_settings
 

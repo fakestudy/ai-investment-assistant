@@ -2,7 +2,7 @@ import os
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
-from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions, query
+from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions, HookMatcher, query
 from claude_agent_sdk.types import (
     AssistantMessage,
     CanUseTool,
@@ -23,6 +23,8 @@ BUILTIN_TOOLS = [
     "WebFetch",
 ]
 
+APPROVAL_KEEPALIVE_HOOK_MATCHER = "__agent_claude_approval_keepalive__"
+
 
 SYSTEM_PROMPT = (
     "You are an AI investment assistant. Answer clearly and use tools only when "
@@ -37,6 +39,31 @@ TITLE_SYSTEM_PROMPT = (
 )
 
 TITLE_AGENT_NAME = "title-generator"
+
+
+async def _approval_control_keepalive_hook(
+    _input: Any,
+    _tool_use_id: str | None,
+    _context: Any,
+) -> dict[str, Any]:
+    return {}
+
+
+def _approval_control_keepalive_hooks(
+    can_use_tool: CanUseTool | None,
+) -> dict[str, list[HookMatcher]] | None:
+    if can_use_tool is None:
+        return None
+    # claude-agent-sdk 0.2.91 keeps stdin open for hooks but not for
+    # can_use_tool alone, while permission prompts need stdin for stdio replies.
+    return {
+        "PreToolUse": [
+            HookMatcher(
+                matcher=APPROVAL_KEEPALIVE_HOOK_MATCHER,
+                hooks=[_approval_control_keepalive_hook],
+            )
+        ]
+    }
 
 
 def _anthropic_env() -> dict[str, str]:
@@ -78,6 +105,7 @@ def build_options(
         session_store=session_store,
         env=_anthropic_env(),
         can_use_tool=can_use_tool,
+        hooks=_approval_control_keepalive_hooks(can_use_tool),
     )
 
 

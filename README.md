@@ -103,14 +103,27 @@ cd web
 pnpm chat:cli
 ```
 
+如果希望在任意目录直接输入 `aia`：
+
+```bash
+cd web
+pnpm link --global
+aia
+```
+
 默认连接 `http://127.0.0.1:3000`。如需连接其他入口：
 
 ```bash
 AIA_API_BASE_URL=http://127.0.0.1:3000 pnpm chat:cli
 ```
 
-CLI 内支持 `/help`、`/new`、`/sessions`、`/switch <id|#>`、`/stop`、
-`/approve`、`/reject` 和 `/quit`。
+CLI 每次启动默认进入新聊天；历史会话不会自动展开，可用 `/sessions`
+查看，再用 `/switch <id|#>` 切换。
+
+CLI 内支持 `/help`、`/new`、`/sessions`、`/switch <id|#>`、
+`/rename <title>`、`/delete`、`/stop`、`/approve`、`/reject`、
+`/regenerate`、`/edit <id|#> <message>`、`/get-balance` 和 `/quit`。
+输入 `/get` 时会提示 `/get-balance`，可用上下键选择，回车补全后再次回车执行。
 
 ## 验证命令
 

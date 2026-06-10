@@ -18,6 +18,11 @@ AGENT_API_PID_FILE="$RUN_DIR/agent-api.pid"
 WEB_PID_FILE="$RUN_DIR/web.pid"
 AGENT_API_LOG="$LOG_DIR/agent-api.log"
 WEB_LOG="$LOG_DIR/web.log"
+READY_SLEEP_SECONDS="${DEV_READY_SLEEP_SECONDS:-1}"
+AGENT_READY_ATTEMPTS="${DEV_AGENT_READY_ATTEMPTS:-60}"
+WEB_READY_ATTEMPTS="${DEV_WEB_READY_ATTEMPTS:-120}"
+LOCAL_ENTRY_READY_ATTEMPTS="${DEV_LOCAL_ENTRY_READY_ATTEMPTS:-60}"
+LOCAL_ENTRY_URL="${DEV_LOCAL_ENTRY_URL:-http://localhost:3000/chat}"
 
 # ---- 输出辅助 ----
 if [[ -t 1 ]]; then
@@ -96,6 +101,33 @@ is_running() {
   local pid
   pid="$(cat "$pid_file" 2>/dev/null || true)"
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+wait_for_http_ready() {
+  local label="$1" url="$2" attempts="$3" pid_file="${4:-}" log_file="${5:-}"
+  local ready=0
+  local _
+  for _ in $(seq 1 "$attempts"); do
+    if [[ -n "$pid_file" ]] && ! is_running "$pid_file"; then
+      error "$label 进程已退出，请查看 $log_file"
+      exit 1
+    fi
+    if curl -fsS -o /dev/null "$url" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    sleep "$READY_SLEEP_SECONDS"
+  done
+  if [[ "$ready" == "1" ]]; then
+    ok "$label 已就绪"
+    return
+  fi
+  if [[ -n "$log_file" ]]; then
+    error "$label 未在超时时间内就绪，请查看 $log_file"
+  else
+    error "$label 未在超时时间内就绪"
+  fi
+  exit 1
 }
 
 # ---- 1. 加载 .env ----
@@ -186,27 +218,9 @@ else
     exit 1
   fi
   ok "agent_claude api 进程已拉起 (pid=$(cat "$AGENT_API_PID_FILE"))，日志: $AGENT_API_LOG"
-
-  info "等待 agent_claude HTTP 就绪 ($AGENT_HTTP_URL/api/health)..."
-  agent_ready=0
-  for _ in $(seq 1 60); do
-    if ! is_running "$AGENT_API_PID_FILE"; then
-      error "agent_claude 进程已退出，请查看 $AGENT_API_LOG"
-      exit 1
-    fi
-    if curl -fsS -o /dev/null "$AGENT_HTTP_URL/api/health" 2>/dev/null; then
-      agent_ready=1
-      break
-    fi
-    sleep 1
-  done
-  if [[ "$agent_ready" == "1" ]]; then
-    ok "agent_claude HTTP 已就绪"
-  else
-    error "agent_claude HTTP 未在超时时间内就绪，请查看 $AGENT_API_LOG"
-    exit 1
-  fi
 fi
+info "等待 agent_claude HTTP 就绪 ($AGENT_HTTP_URL/api/health)..."
+wait_for_http_ready "agent_claude HTTP" "$AGENT_HTTP_URL/api/health" "$AGENT_READY_ATTEMPTS" "$AGENT_API_PID_FILE" "$AGENT_API_LOG"
 
 # ---- 5. 启动 web ----
 if is_running "$WEB_PID_FILE"; then
@@ -231,29 +245,15 @@ else
     exit 1
   fi
   ok "web 进程已拉起 (pid=$(cat "$WEB_PID_FILE"))，日志: $WEB_LOG"
-
-  # Next.js dev 首次访问路由才会现场编译，这里预热 /chat 并等待首屏可访问，
-  # 避免「脚本提示已启动但刷新拿不到页面/数据」的竞态。
-  info "等待 web 首屏就绪并预热 /chat..."
-  web_ready=0
-  for _ in $(seq 1 120); do
-    if ! is_running "$WEB_PID_FILE"; then
-      error "web 进程已退出，请查看 $WEB_LOG"
-      exit 1
-    fi
-    if curl -fsS -o /dev/null "http://localhost:3001/chat" 2>/dev/null; then
-      web_ready=1
-      break
-    fi
-    sleep 1
-  done
-  if [[ "$web_ready" == "1" ]]; then
-    ok "web 首屏已就绪"
-  else
-    error "web 首屏未在超时时间内就绪，请查看 $WEB_LOG"
-    exit 1
-  fi
 fi
+
+# Next.js dev 首次访问路由才会现场编译，这里预热 /chat 并等待首屏可访问，
+# 避免「脚本提示已启动但刷新拿不到页面/数据」的竞态。
+info "等待 web 首屏就绪并预热 /chat..."
+wait_for_http_ready "web 首屏" "http://localhost:3001/chat" "$WEB_READY_ATTEMPTS" "$WEB_PID_FILE" "$WEB_LOG"
+
+info "等待本地入口就绪 ($LOCAL_ENTRY_URL)..."
+wait_for_http_ready "本地入口" "$LOCAL_ENTRY_URL" "$LOCAL_ENTRY_READY_ATTEMPTS"
 
 echo ""
 ok "开发环境已启动"

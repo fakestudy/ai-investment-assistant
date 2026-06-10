@@ -2,10 +2,14 @@
 	"name": "web",
 	"version": "0.1.0",
 	"private": true,
+	"bin": {
+		"aia": "bin/aia.mjs"
+	},
 	"scripts": {
 		"dev": "next dev --port 3001",
+		"aia": "node bin/aia.mjs",
 		"chat:cli": "node --import tsx cli/main.tsx",
-		"test:chat-cli": "node --import tsx --test cli/chat-cli-state.test.ts",
+		"test:chat-cli": "node --import tsx --test cli/chat-cli-state.test.ts cli/chat-cli-bin.test.ts features/chat/slash-commands.test.ts",
 		"build": "next build",
 		"start": "next start",
 		"lint": "biome check",

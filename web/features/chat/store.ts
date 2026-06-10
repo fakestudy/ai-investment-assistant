@@ -20,6 +20,7 @@ import type {
 	ChatError,
 	ChatMessage,
 	ChatStreamEvent,
+	ChatTimelinePart,
 	Conversation,
 	ConversationRunState,
 	ReceivedChatStreamEvent,
@@ -146,6 +147,58 @@ const mergeTimelinePartsById = (
 		...loadedParts,
 		...existingParts.filter((part) => !loadedPartIds.has(part.id)),
 	];
+};
+
+const upsertApprovalTimelinePart = (
+	parts: ChatMessage["timelineParts"],
+	batch: ApprovalBatch,
+): ChatTimelinePart[] => {
+	const currentParts = parts ?? [];
+	const partIndex = currentParts.findIndex(
+		(part) => part.type === "approval" && part.batch.id === batch.id,
+	);
+	const currentApprovalPart = currentParts[partIndex];
+	const nextPart: Extract<ChatTimelinePart, { type: "approval" }> =
+		currentApprovalPart?.type !== "approval"
+			? {
+					id: `approval-${batch.id}`,
+					type: "approval",
+					batch,
+				}
+			: {
+					...currentApprovalPart,
+					batch,
+				};
+
+	if (partIndex === -1) {
+		return [...currentParts, nextPart];
+	}
+
+	return currentParts.map((part, index) =>
+		index === partIndex ? nextPart : part,
+	);
+};
+
+const projectActiveApprovalBatch = (
+	messages: ChatMessage[],
+	activeRun: ActiveRunSummary | null | undefined,
+): ChatMessage[] => {
+	if (!activeRun?.approvalBatch) {
+		return messages;
+	}
+	const approvalBatch = activeRun.approvalBatch;
+
+	return messages.map((message) =>
+		message.id === activeRun.assistantMessageId
+			? {
+					...message,
+					timelineParts: upsertApprovalTimelinePart(
+						message.timelineParts,
+						approvalBatch,
+					),
+				}
+			: message,
+	);
 };
 
 const mergeLoadedConversationMessagesById = ({
@@ -305,6 +358,7 @@ const findConversationForApprovalBatch = (
 type StartStreamInput = {
 	conversationId: string;
 	initialMessageId?: string;
+	replaceActiveController?: boolean;
 	connect: (
 		signal: AbortSignal,
 		onEvent: (event: ReceivedChatStreamEvent) => void,
@@ -323,6 +377,7 @@ const startStream = async (
 		currentState.controllersByConversationId[input.conversationId];
 	const currentRun = currentState.runsByConversationId[input.conversationId];
 	if (
+		!input.replaceActiveController &&
 		input.initialMessageId &&
 		currentController &&
 		!currentController.signal.aborted &&
@@ -539,13 +594,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			set((state) => ({
 				messagesByConversationId: {
 					...state.messagesByConversationId,
-					[conversationId]: activeRun
-						? mergeLoadedConversationMessagesById({
-								existingMessages:
-									state.messagesByConversationId[conversationId],
-								loadedMessages: messages,
-							})
-						: messages,
+					[conversationId]: projectActiveApprovalBatch(
+						activeRun
+							? mergeLoadedConversationMessagesById({
+									existingMessages:
+										state.messagesByConversationId[conversationId],
+									loadedMessages: messages,
+								})
+							: messages,
+						activeRun,
+					),
 				},
 				runsByConversationId: {
 					...state.runsByConversationId,
@@ -742,6 +800,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			{
 				conversationId,
 				initialMessageId: run?.assistantMessageId,
+				replaceActiveController: true,
 				connect: (signal, onEvent) =>
 					submitApprovalDecisions(
 						batchId,

@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Chat Flow Prototype</title>
+	<style>
+		:root {
+			color-scheme: light;
+			--background: #ffffff;
+			--sidebar: #fafafa;
+			--foreground: #18181b;
+			--muted: #71717a;
+			--soft: #f4f4f5;
+			--soft-2: #f8fafc;
+			--border: #e4e4e7;
+			--border-soft: #f4f4f5;
+			--primary: #18181b;
+			--amber-bg: #fffbeb;
+			--amber-border: #fde68a;
+			--amber-text: #92400e;
+			--green-bg: #ecfdf5;
+			--green-border: #bbf7d0;
+			--green-text: #166534;
+			--red-bg: #fef2f2;
+			--red-border: #fecaca;
+			--red-text: #991b1b;
+			--blue-bg: #eff6ff;
+			--blue-text: #1d4ed8;
+			--shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.06);
+			--shadow-lg: 0 18px 50px rgba(24, 24, 27, 0.12);
+			--font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			--mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+		}
+
+		* {
+			box-sizing: border-box;
+		}
+
+		body {
+			margin: 0;
+			background: var(--background);
+			color: var(--foreground);
+			font-family: var(--font);
+			font-size: 14px;
+			letter-spacing: 0;
+		}
+
+		button,
+		textarea {
+			font: inherit;
+		}
+
+		button {
+			cursor: pointer;
+		}
+
+		.app {
+			display: flex;
+			min-height: 100vh;
+			background: var(--background);
+		}
+
+		.sidebar {
+			display: flex;
+			width: 260px;
+			flex-shrink: 0;
+			flex-direction: column;
+			border-right: 1px solid var(--border);
+			background: rgba(250, 250, 250, 0.96);
+			padding: 12px;
+		}
+
+		.new-chat {
+			display: flex;
+			height: 40px;
+			width: 100%;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			border: 1px solid var(--border);
+			border-radius: 12px;
+			background: #ffffff;
+			color: #09090b;
+			font-weight: 500;
+			box-shadow: var(--shadow-sm);
+		}
+
+		.thread-list {
+			display: flex;
+			flex: 1;
+			flex-direction: column;
+			gap: 4px;
+			margin-top: 16px;
+			overflow-y: auto;
+			padding-right: 4px;
+		}
+
+		.thread {
+			display: flex;
+			width: 100%;
+			align-items: center;
+			gap: 8px;
+			border: 0;
+			border-radius: 12px;
+			background: transparent;
+			padding: 8px;
+			color: #3f3f46;
+			text-align: left;
+			transition: background 140ms ease, box-shadow 140ms ease;
+		}
+
+		.thread.active {
+			background: #ffffff;
+			box-shadow: var(--shadow-sm);
+			outline: 1px solid var(--border);
+		}
+
+		.thread:hover {
+			background: rgba(255, 255, 255, 0.8);
+		}
+
+		.thread-icon {
+			width: 14px;
+			height: 14px;
+			flex-shrink: 0;
+			border: 1.5px solid #71717a;
+			border-radius: 3px;
+		}
+
+		.thread-title {
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.main {
+			display: flex;
+			min-width: 0;
+			flex: 1;
+			flex-direction: column;
+			background: var(--background);
+		}
+
+		.header {
+			display: flex;
+			height: 56px;
+			flex-shrink: 0;
+			align-items: center;
+			justify-content: space-between;
+			border-bottom: 1px solid var(--border-soft);
+			padding: 0 24px;
+		}
+
+		.header-title {
+			margin: 0;
+			font-size: 16px;
+			font-weight: 500;
+		}
+
+		.run-chip {
+			display: inline-flex;
+			align-items: center;
+			gap: 8px;
+			border: 1px solid var(--amber-border);
+			border-radius: 999px;
+			background: var(--amber-bg);
+			padding: 5px 10px;
+			color: var(--amber-text);
+			font-size: 12px;
+			font-weight: 500;
+		}
+
+		.run-chip::before {
+			width: 7px;
+			height: 7px;
+			border-radius: 999px;
+			background: currentColor;
+			content: "";
+		}
+
+		.run-chip.completed {
+			border-color: var(--green-border);
+			background: var(--green-bg);
+			color: var(--green-text);
+		}
+
+		.run-chip.limited {
+			border-color: var(--red-border);
+			background: var(--red-bg);
+			color: var(--red-text);
+		}
+
+		.content {
+			display: flex;
+			min-height: 0;
+			flex: 1;
+			flex-direction: column;
+		}
+
+		.messages {
+			flex: 1;
+			overflow-y: auto;
+			padding: 32px 24px 28px;
+		}
+
+		.message-list {
+			width: min(100%, 960px);
+			margin: 0 auto;
+		}
+
+		.message {
+			display: flex;
+			margin-bottom: 26px;
+		}
+
+		.message.user {
+			justify-content: flex-end;
+		}
+
+		.user-bubble {
+			max-width: min(75%, 720px);
+			border-radius: 24px;
+			background: var(--soft);
+			padding: 12px 16px;
+			color: #18181b;
+			line-height: 1.65;
+			box-shadow: var(--shadow-sm);
+		}
+
+		.message.assistant {
+			align-items: flex-start;
+			gap: 14px;
+		}
+
+		.avatar {
+			display: grid;
+			width: 32px;
+			height: 32px;
+			flex-shrink: 0;
+			place-items: center;
+			border-radius: 999px;
+			background: #18181b;
+			color: #ffffff;
+			font-size: 12px;
+			font-weight: 700;
+		}
+
+		.assistant-body {
+			min-width: 0;
+			flex: 1;
+		}
+
+		.process {
+			margin: 2px 0 14px;
+		}
+
+		.process-trigger {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			border: 1px solid transparent;
+			border-radius: 9px;
+			background: transparent;
+			padding: 3px 0;
+			color: #71717a;
+			font-size: 13px;
+			font-weight: 500;
+		}
+
+		.process-trigger:hover {
+			color: #3f3f46;
+		}
+
+		.process-time {
+			color: #71717a;
+			font-weight: 400;
+		}
+
+		.process-chevron {
+			display: inline-block;
+			color: #a1a1aa;
+			transition: transform 160ms ease;
+		}
+
+		.process.collapsed .process-chevron {
+			transform: rotate(-90deg);
+		}
+
+		.process-details {
+			margin-top: 10px;
+			border-top: 1px solid var(--border-soft);
+			padding-top: 12px;
+		}
+
+		.process.collapsed .process-details {
+			display: none;
+		}
+
+		.trace-list {
+			display: grid;
+			gap: 12px;
+			margin: 0;
+			padding: 0;
+			list-style: none;
+		}
+
+		.trace-note {
+			margin: 0;
+			color: #52525b;
+			font-size: 13px;
+			line-height: 1.6;
+		}
+
+		.trace-tool {
+			display: grid;
+			grid-template-columns: 22px minmax(0, 1fr);
+			gap: 10px;
+			align-items: start;
+			color: #52525b;
+		}
+
+		.tool-icon {
+			display: grid;
+			width: 22px;
+			height: 22px;
+			place-items: center;
+			border-radius: 999px;
+			background: #f4f4f5;
+			color: #71717a;
+		}
+
+		.tool-icon svg {
+			width: 13px;
+			height: 13px;
+			stroke-width: 2.2;
+		}
+
+		.trace-head {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			min-width: 0;
+		}
+
+		.trace-name {
+			overflow: hidden;
+			color: #3f3f46;
+			font-weight: 600;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.status {
+			flex-shrink: 0;
+			border-radius: 999px;
+			padding: 2px 7px;
+			font-size: 12px;
+			font-weight: 500;
+		}
+
+		.status.done {
+			background: var(--green-bg);
+			color: var(--green-text);
+		}
+
+		.status.waiting {
+			background: var(--amber-bg);
+			color: var(--amber-text);
+		}
+
+		.status.running {
+			background: var(--blue-bg);
+			color: var(--blue-text);
+		}
+
+		.status.rejected {
+			background: var(--red-bg);
+			color: var(--red-text);
+		}
+
+		.trace-text {
+			margin: 3px 0 0;
+			color: #71717a;
+			font-size: 13px;
+			line-height: 1.55;
+		}
+
+		.trace-args {
+			display: inline-block;
+			max-width: 100%;
+			margin-top: 7px;
+			overflow: hidden;
+			border-radius: 8px;
+			background: #f4f4f5;
+			padding: 5px 8px;
+			color: #52525b;
+			font-family: var(--mono);
+			font-size: 12px;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.answer {
+			color: #18181b;
+			font-size: 14px;
+			line-height: 1.75;
+		}
+
+		.answer p {
+			margin: 0 0 12px;
+		}
+
+		.answer strong {
+			font-weight: 650;
+		}
+
+		.composer-area {
+			flex-shrink: 0;
+			border-top: 1px solid var(--border-soft);
+			background: var(--background);
+			padding: 16px 24px 20px;
+		}
+
+		.composer-inner {
+			position: relative;
+			width: min(100%, 960px);
+			margin: 0 auto;
+		}
+
+		.approval-dock {
+			position: absolute;
+			right: 0;
+			bottom: calc(100% + 12px);
+			left: 0;
+			z-index: 2;
+			display: grid;
+			grid-template-columns: 34px minmax(0, 1fr);
+			gap: 14px;
+			max-height: min(260px, 42vh);
+			overflow: auto;
+			border: 1px solid #e4e4e7;
+			border-radius: 18px;
+			background: rgba(255, 255, 255, 0.96);
+			padding: 14px;
+			box-shadow: var(--shadow-lg);
+			backdrop-filter: blur(14px);
+		}
+
+		.approval-dock.hidden {
+			display: none;
+		}
+
+		.approval-left {
+			display: contents;
+			min-width: 0;
+		}
+
+		.approval-icon {
+			display: grid;
+			width: 34px;
+			height: 34px;
+			flex-shrink: 0;
+			place-items: center;
+			border-radius: 999px;
+			background: #18181b;
+			color: #ffffff;
+		}
+
+		.approval-title {
+			margin: 0;
+			color: #18181b;
+			font-weight: 650;
+		}
+
+		.approval-meta {
+			margin: 3px 0 0;
+			color: #71717a;
+			font-size: 12px;
+			line-height: 1.5;
+		}
+
+		.approval-code {
+			display: inline-block;
+			max-width: 100%;
+			margin-top: 8px;
+			overflow: hidden;
+			border-radius: 10px;
+			background: #f4f4f5;
+			padding: 8px 10px;
+			color: #52525b;
+			font-family: var(--mono);
+			font-size: 12px;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.approval-actions {
+			display: grid;
+			grid-column: 2;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			flex-shrink: 0;
+			gap: 8px;
+			margin-top: -2px;
+		}
+
+		.action-btn {
+			display: inline-flex;
+			height: 36px;
+			align-items: center;
+			justify-content: center;
+			gap: 6px;
+			border: 1px solid var(--border);
+			border-radius: 12px;
+			background: #ffffff;
+			padding: 0 12px;
+			color: #18181b;
+			font-size: 13px;
+			font-weight: 500;
+			transition: background 140ms ease, border-color 140ms ease;
+		}
+
+		.action-btn:hover {
+			background: #f4f4f5;
+		}
+
+		.action-btn.approve {
+			border-color: var(--green-border);
+			background: var(--green-bg);
+			color: var(--green-text);
+		}
+
+		.action-btn.reject {
+			border-color: var(--red-border);
+			background: var(--red-bg);
+			color: var(--red-text);
+		}
+
+		.composer {
+			display: flex;
+			align-items: flex-end;
+			gap: 8px;
+			border: 1px solid var(--border);
+			border-radius: 24px;
+			background: #ffffff;
+			padding: 8px;
+			box-shadow: 0 14px 44px rgba(15, 23, 42, 0.1);
+		}
+
+		textarea {
+			min-height: 48px;
+			max-height: 180px;
+			flex: 1;
+			resize: none;
+			border: 0;
+			background: transparent;
+			padding: 11px 12px;
+			color: #18181b;
+			outline: none;
+		}
+
+		textarea::placeholder {
+			color: #a1a1aa;
+		}
+
+		.send-btn {
+			display: grid;
+			width: 36px;
+			height: 36px;
+			flex-shrink: 0;
+			place-items: center;
+			border: 0;
+			border-radius: 999px;
+			background: #18181b;
+			color: #ffffff;
+		}
+
+		.send-btn:disabled {
+			background: #e4e4e7;
+			color: #a1a1aa;
+			cursor: not-allowed;
+		}
+
+		.disclaimer {
+			margin: 8px 0 0;
+			color: #71717a;
+			font-size: 12px;
+			text-align: center;
+		}
+
+		@media (max-width: 840px) {
+			.sidebar {
+				display: none;
+			}
+
+			.header {
+				padding: 0 16px;
+			}
+
+			.messages {
+				padding: 24px 16px;
+			}
+
+			.user-bubble {
+				max-width: 88%;
+			}
+
+			.message.assistant {
+				gap: 10px;
+			}
+
+			.approval-dock {
+				position: static;
+				grid-template-columns: 34px minmax(0, 1fr);
+				margin-bottom: 12px;
+			}
+
+			.approval-actions {
+				grid-column: 1 / -1;
+				width: 100%;
+			}
+
+			.action-btn {
+				flex: 1;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div class="app">
+		<aside class="sidebar">
+			<button class="new-chat" type="button">＋ New chat</button>
+			<nav class="thread-list">
+				<button class="thread active" type="button">
+					<span class="thread-icon"></span>
+					<span class="thread-title">腾讯控股近期催化</span>
+				</button>
+				<button class="thread" type="button">
+					<span class="thread-icon"></span>
+					<span class="thread-title">Apple earnings follow-up</span>
+				</button>
+				<button class="thread" type="button">
+					<span class="thread-icon"></span>
+					<span class="thread-title">半导体设备比较</span>
+				</button>
+			</nav>
+		</aside>
+
+		<main class="main">
+			<header class="header">
+				<h1 class="header-title">AI Chat Assistant</h1>
+				<div class="run-chip" id="runChip">Awaiting approval</div>
+			</header>
+
+			<section class="content">
+				<div class="messages">
+					<div class="message-list">
+						<div class="message user">
+							<div class="user-bubble">帮我查一下腾讯控股最近的财报、回购和监管变化，重点判断短期是否有催化。</div>
+						</div>
+
+						<div class="message assistant">
+							<div class="avatar">AI</div>
+							<div class="assistant-body">
+								<section class="process" id="runPanel">
+									<button class="process-trigger" id="toggleTimeline" type="button">
+										<span id="processLabel">已处理</span>
+										<span class="process-time" id="processTime">18s</span>
+										<span class="process-chevron">⌄</span>
+									</button>
+
+									<div class="process-details">
+										<ul class="trace-list">
+											<li>
+												<p class="trace-note">确认需要查财报、回购记录和监管变化，再输出短期催化判断。</p>
+											</li>
+
+											<li class="trace-tool">
+												<span class="tool-icon" aria-hidden="true">
+													<svg fill="none" viewBox="0 0 24 24">
+														<circle cx="11" cy="11" r="6" stroke="currentColor"></circle>
+														<path d="m16 16 4 4" stroke="currentColor" stroke-linecap="round"></path>
+													</svg>
+												</span>
+												<div class="trace-main">
+													<div class="trace-head">
+														<span class="trace-name">WebSearch</span>
+														<span class="status waiting" id="toolStatus">awaiting approval</span>
+													</div>
+													<p class="trace-text" id="toolText">工具请求已生成，等待你批准后继续执行。</p>
+													<span class="trace-args">{"query":"腾讯控股 财报 回购 监管 2026 最新公告"}</span>
+												</div>
+											</li>
+
+											<li>
+												<p class="trace-note" id="answerText">等待工具结果，避免在证据不足时先给结论。</p>
+											</li>
+										</ul>
+									</div>
+								</section>
+
+								<div class="answer" id="answer">
+									<p>当前运行暂停在工具执行前。批准后我会继续检索并生成结论；拒绝后会说明缺少最新外部证据，只给出判断框架。</p>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<footer class="composer-area">
+					<div class="composer-inner">
+						<section class="approval-dock" id="approvalDock">
+							<div class="approval-left">
+								<div class="approval-icon">!</div>
+								<div>
+									<p class="approval-title">WebSearch 请求审批</p>
+									<p class="approval-meta">批准后继续执行工具；拒绝后本轮会以受限信息结束。</p>
+									<div class="approval-code">{"query":"腾讯控股 财报 回购 监管 2026 最新公告"}</div>
+								</div>
+							</div>
+							<div class="approval-actions">
+								<button class="action-btn approve" id="approveBtn" type="button">批准</button>
+								<button class="action-btn reject" id="rejectBtn" type="button">拒绝</button>
+							</div>
+						</section>
+
+						<div class="composer">
+							<textarea disabled id="input" placeholder="等待当前运行结束后继续输入"></textarea>
+							<button class="send-btn" disabled type="button">↑</button>
+						</div>
+						<p class="disclaimer">AI can make mistakes. Check important info.</p>
+					</div>
+				</footer>
+			</section>
+		</main>
+	</div>
+
+	<script>
+		const runPanel = document.querySelector("#runPanel");
+		const toggleTimeline = document.querySelector("#toggleTimeline");
+		const approvalDock = document.querySelector("#approvalDock");
+		const approveBtn = document.querySelector("#approveBtn");
+		const rejectBtn = document.querySelector("#rejectBtn");
+		const runChip = document.querySelector("#runChip");
+		const processLabel = document.querySelector("#processLabel");
+		const processTime = document.querySelector("#processTime");
+		const toolStatus = document.querySelector("#toolStatus");
+		const toolText = document.querySelector("#toolText");
+		const answerText = document.querySelector("#answerText");
+		const answer = document.querySelector("#answer");
+		const input = document.querySelector("#input");
+
+		function setStatus(element, status, text) {
+			element.className = `status ${status}`;
+			element.textContent = text;
+		}
+
+		function unlockInput() {
+			input.disabled = false;
+			input.placeholder = "Ask anything";
+		}
+
+		toggleTimeline.addEventListener("click", () => {
+			runPanel.classList.toggle("collapsed");
+		});
+
+		approveBtn.addEventListener("click", () => {
+			approvalDock.classList.add("hidden");
+			runChip.textContent = "Resuming";
+			runChip.className = "run-chip";
+			processLabel.textContent = "正在处理";
+			processTime.textContent = "24s";
+			setStatus(toolStatus, "running", "running");
+			toolText.textContent = "审批已通过，正在执行 WebSearch。";
+
+			window.setTimeout(() => {
+				setStatus(toolStatus, "done", "completed");
+				toolText.textContent = "已获取最新公告、回购和监管变化摘要。";
+				answerText.textContent = "正在生成结论。";
+				processTime.textContent = "31s";
+			}, 650);
+
+			window.setTimeout(() => {
+				answerText.textContent = "回答已生成。";
+				runChip.textContent = "Completed";
+				runChip.className = "run-chip completed";
+				processLabel.textContent = "已处理";
+				processTime.textContent = "36s";
+				answer.innerHTML = `
+					<p><strong>初步判断：</strong>短期催化主要来自回购节奏和业绩兑现，监管变化目前更像估值约束而不是明确正催化。</p>
+					<p>下一步应验证三点：利润修复是否持续、回购是否足以改善每股收益、监管新闻是否改变风险偏好。</p>
+				`;
+				unlockInput();
+			}, 1300);
+		});
+
+		rejectBtn.addEventListener("click", () => {
+			approvalDock.classList.add("hidden");
+			setStatus(toolStatus, "rejected", "rejected");
+			toolText.textContent = "你拒绝了 WebSearch，本轮不会执行外部检索。";
+			answerText.textContent = "已输出受限结论。";
+			runChip.textContent = "Limited answer";
+			runChip.className = "run-chip limited";
+			processLabel.textContent = "已处理";
+			processTime.textContent = "19s";
+			answer.innerHTML = `
+				<p><strong>受限判断：</strong>我不能确认最新财报、回购和监管变化，只能给出研究框架。</p>
+				<p>这个问题的第一优先级不是直接判断涨跌，而是先验证最新官方披露是否支持催化假设。</p>
+			`;
+			unlockInput();
+		});
+	</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help install agent-claude-dev check-dev test-dev-config dev-start dev-stop
+.PHONY: help install agent-claude-dev check-dev test-dev-config dev-start dev-stop chat-cli
 
 help:
 	@echo "可用命令:"
@@ -10,6 +10,7 @@ help:
 	@echo "  make test-dev-config  测试本地开发脚本配置解析"
 	@echo "  make dev-start        启动本地开发环境 (postgres + nginx + pgweb + agent_claude api + web)"
 	@echo "  make dev-stop         停止本地开发环境"
+	@echo "  make chat-cli         启动终端版聊天 CLI (需先 make dev-start)"
 
 install:
 	cd web && pnpm install
@@ -29,3 +30,6 @@ dev-start:
 
 dev-stop:
 	@bash scripts/dev-stop.sh
+
+chat-cli:
+	cd web && pnpm chat:cli

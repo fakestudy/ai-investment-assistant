@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	appendReasoningTimelinePart,
 	getLatestStreamingAssistantMessageId,
+	getPendingApprovalForInput,
 	getRenderableTimelineParts,
 	getResumableStreamingMessageId,
 	getVisibleMessageWindow,
@@ -56,6 +57,59 @@ test("isConversationInputLocked locks only the conversation with an active run",
 	assert.equal(isConversationInputLocked(state, "conversation-1"), true);
 	assert.equal(isConversationInputLocked(state, "conversation-2"), false);
 	assert.equal(isConversationInputLocked(state, undefined), false);
+});
+
+test("getPendingApprovalForInput returns only the active pending approval batch", () => {
+	const pendingBatch = {
+		id: "batch-1",
+		status: "pending" as const,
+		expiresAt: "2026-01-01T00:30:00.000Z",
+		requests: [
+			{
+				id: "request-1",
+				toolInvocationId: "tool-1",
+				toolName: "WebSearch",
+				args: { query: "北京天气" },
+				decision: "pending" as const,
+			},
+		],
+	};
+
+	const state = {
+		activeConversationId: "conversation-1",
+		runsByConversationId: {
+			"conversation-1": {
+				status: "awaiting_approval" as const,
+				approvalBatch: pendingBatch,
+			},
+			"conversation-2": {
+				status: "awaiting_approval" as const,
+				approvalBatch: {
+					...pendingBatch,
+					id: "batch-other",
+				},
+			},
+		},
+	};
+
+	assert.equal(getPendingApprovalForInput(state), pendingBatch);
+	assert.equal(
+		getPendingApprovalForInput(state),
+		getPendingApprovalForInput(state),
+	);
+
+	assert.equal(
+		getPendingApprovalForInput({
+			activeConversationId: "conversation-1",
+			runsByConversationId: {
+				"conversation-1": {
+					status: "resuming" as const,
+					approvalBatch: pendingBatch,
+				},
+			},
+		}),
+		undefined,
+	);
 });
 
 test("getVisibleMessageWindow returns the latest bounded message slice", () => {

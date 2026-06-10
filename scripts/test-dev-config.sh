@@ -138,6 +138,16 @@ EOF
   cat >"$fake_bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+url="${*: -1}"
+if [[ "$url" == */api/health && "${FAKE_AGENT_HEALTH_MODE:-success}" == "fail" ]]; then
+  exit 1
+fi
+if [[ "$url" == "http://localhost:3001/chat" && "${FAKE_WEB_HEALTH_MODE:-success}" == "fail" ]]; then
+  exit 1
+fi
+if [[ "$url" == "http://localhost:3000/chat" && "${FAKE_NGINX_MODE:-success}" == "fail" ]]; then
+  exit 1
+fi
 exit 0
 EOF
   chmod +x "$fake_bin/docker" "$fake_bin/uv" "$fake_bin/pnpm" "$fake_bin/curl"
@@ -158,12 +168,27 @@ cleanup_run_dir() {
 run_dev_start() {
   local tmp_dir="$1" addr="$2" web_mode="$3" output_file="$4"
   local agent_mode="${5:-success}"
+  local nginx_mode="${6:-success}"
+  local agent_health_mode="${7:-success}"
+  local web_health_mode="${8:-success}"
+  local existing_pids="${9:-}"
   local fake_bin="$tmp_dir/bin"
   local env_file="$tmp_dir/.env"
   local run_dir="$tmp_dir/run"
   local markers_dir="$tmp_dir/markers"
   make_fake_bin "$fake_bin"
   rm -rf "$markers_dir"
+  mkdir -p "$run_dir"
+  if [[ "$existing_pids" == *agent* ]]; then
+    sleep 30 >/dev/null 2>&1 &
+    echo $! >"$run_dir/agent-api.pid"
+    disown "$!" 2>/dev/null || true
+  fi
+  if [[ "$existing_pids" == *web* ]]; then
+    sleep 30 >/dev/null 2>&1 &
+    echo $! >"$run_dir/web.pid"
+    disown "$!" 2>/dev/null || true
+  fi
   cat >"$env_file" <<EOF
 ANTHROPIC_BASE_URL=https://example.com
 ANTHROPIC_AUTH_TOKEN=test-token
@@ -172,11 +197,18 @@ DATABASE_URL=postgresql+psycopg://investment:investment@localhost:5432/agent_cla
 BFF_HTTP_ADDR=$addr
 EOF
   FAKE_AGENT_MODE="$agent_mode" \
+    FAKE_AGENT_HEALTH_MODE="$agent_health_mode" \
+    FAKE_NGINX_MODE="$nginx_mode" \
+    FAKE_WEB_HEALTH_MODE="$web_health_mode" \
     FAKE_WEB_MODE="$web_mode" \
     FAKE_SERVICE_MARKERS="$markers_dir" \
     DEV_ENV_FILE="$env_file" \
     DEV_RUN_DIR="$run_dir" \
     DEV_LOG_DIR="$run_dir/logs" \
+    DEV_READY_SLEEP_SECONDS=0 \
+    DEV_AGENT_READY_ATTEMPTS=3 \
+    DEV_WEB_READY_ATTEMPTS=3 \
+    DEV_LOCAL_ENTRY_READY_ATTEMPTS=3 \
     PATH="$fake_bin:$PATH" \
     bash "$REPO_ROOT/scripts/dev-start.sh" >"$output_file" 2>&1
   local status=$?
@@ -235,6 +267,30 @@ assert_contains "$OUTPUT_FILE" "web 启动失败" \
   "dev-start.sh must report web startup failure"
 assert_not_contains "$OUTPUT_FILE" "开发环境已启动" \
   "dev-start.sh must not print success after web startup failure"
+if run_dev_start "$TMP_DIR" ":9090" "success" "$OUTPUT_FILE" "success" "fail"; then
+  echo "FAIL: dev-start.sh must fail when nginx local entry is not ready" >&2
+  exit 1
+fi
+assert_contains "$OUTPUT_FILE" "本地入口 未在超时时间内就绪" \
+  "dev-start.sh must report nginx local entry readiness failure"
+assert_not_contains "$OUTPUT_FILE" "开发环境已启动" \
+  "dev-start.sh must not print success before nginx local entry is ready"
+if run_dev_start "$TMP_DIR" ":9090" "success" "$OUTPUT_FILE" "success" "success" "fail" "success" "agent"; then
+  echo "FAIL: dev-start.sh must fail when existing agent_claude pid is not HTTP ready" >&2
+  exit 1
+fi
+assert_contains "$OUTPUT_FILE" "agent_claude HTTP 未在超时时间内就绪" \
+  "dev-start.sh must wait for existing agent_claude HTTP readiness"
+assert_file_not_exists "$TMP_DIR/markers/pnpm" \
+  "dev-start.sh must not start web before existing agent_claude is HTTP ready"
+if run_dev_start "$TMP_DIR" ":9090" "success" "$OUTPUT_FILE" "success" "success" "success" "fail" "web"; then
+  echo "FAIL: dev-start.sh must fail when existing web pid is not serving /chat" >&2
+  exit 1
+fi
+assert_contains "$OUTPUT_FILE" "web 首屏 未在超时时间内就绪" \
+  "dev-start.sh must wait for existing web readiness"
+assert_not_contains "$OUTPUT_FILE" "开发环境已启动" \
+  "dev-start.sh must not print success before existing web is ready"
 if run_dev_start "$TMP_DIR" "8081" "success" "$OUTPUT_FILE"; then
   echo "FAIL: dev-start.sh must reject bare BFF_HTTP_ADDR before startup" >&2
   exit 1
@@ -302,6 +358,12 @@ assert_contains "$REPO_ROOT/Makefile" 'test-dev-config:' \
   "Makefile must expose test-dev-config target"
 assert_contains "$REPO_ROOT/Makefile" 'bash scripts/test-dev-config.sh' \
   "Makefile test-dev-config target must run script test"
+assert_contains "$REPO_ROOT/Makefile" 'chat-cli:' \
+  "Makefile must expose chat-cli target"
+assert_contains "$REPO_ROOT/Makefile" 'cd web && pnpm chat:cli' \
+  "Makefile chat-cli target must run web CLI"
+assert_contains "$REPO_ROOT/Makefile" 'make chat-cli' \
+  "Makefile help must list chat-cli target"
 assert_contains "$REPO_ROOT/Makefile" 'postgres + nginx + pgweb + agent_claude api + web' \
   "Makefile help must describe the dev-start processes"
 assert_contains "$REPO_ROOT/scripts/dev-start.sh" 'tail -f $AGENT_API_LOG $WEB_LOG' \

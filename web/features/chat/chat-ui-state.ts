@@ -1,7 +1,7 @@
 export const INITIAL_VISIBLE_MESSAGE_COUNT = 80;
 export const VISIBLE_MESSAGE_BATCH_SIZE = 80;
 
-import type { ChatTimelinePart, ToolInvocation } from "./types";
+import type { ApprovalBatch, ChatTimelinePart, ToolInvocation } from "./types";
 
 type ActiveStreamingState = {
 	activeConversationId?: string;
@@ -25,6 +25,18 @@ type ConversationInputLockState = {
 	runsByConversationId: Record<
 		string,
 		{ status: "streaming" | "awaiting_approval" | "resuming" } | undefined
+	>;
+};
+
+type PendingApprovalInputState = {
+	activeConversationId?: string;
+	runsByConversationId: Record<
+		string,
+		| {
+				status: "streaming" | "awaiting_approval" | "resuming";
+				approvalBatch?: ApprovalBatch;
+		  }
+		| undefined
 	>;
 };
 
@@ -66,6 +78,25 @@ export function isConversationInputLocked(
 		run?.status === "awaiting_approval" ||
 		run?.status === "resuming"
 	);
+}
+
+export function getPendingApprovalForInput(
+	state: PendingApprovalInputState,
+): ApprovalBatch | undefined {
+	const { activeConversationId } = state;
+	if (!activeConversationId) {
+		return undefined;
+	}
+
+	const run = state.runsByConversationId[activeConversationId];
+	if (
+		run?.status !== "awaiting_approval" ||
+		run.approvalBatch?.status !== "pending"
+	) {
+		return undefined;
+	}
+
+	return run.approvalBatch;
 }
 
 export function getLatestStreamingAssistantMessageId(

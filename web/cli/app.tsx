@@ -3,12 +3,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	cancelChatStream,
 	createConversation,
+	deleteConversation,
+	editMessage,
 	listConversations,
 	listMessages,
+	renameConversation,
 	resumeChatStream,
 	streamChat,
 	submitApprovalDecisions,
 } from "../features/chat/api";
+import {
+	getNextSlashCommandIndex,
+	getSlashCommandSuggestions,
+	isExactSlashCommand,
+} from "../features/chat/slash-commands";
 import type {
 	ActiveRunSummary,
 	ChatMessage,
@@ -19,6 +27,7 @@ import type {
 import {
 	type CliInputAction,
 	type CliStreamState,
+	createFreshCliBootState,
 	findPendingApprovalBatch,
 	getCliStatus,
 	parseCliInput,
@@ -28,7 +37,10 @@ import {
 type ChatCliClient = {
 	listConversations: typeof listConversations;
 	createConversation: typeof createConversation;
+	renameConversation: typeof renameConversation;
+	deleteConversation: typeof deleteConversation;
 	listMessages: typeof listMessages;
+	editMessage: typeof editMessage;
 	streamChat: typeof streamChat;
 	resumeChatStream: typeof resumeChatStream;
 	submitApprovalDecisions: typeof submitApprovalDecisions;
@@ -40,7 +52,10 @@ type RuntimePhase = "booting" | "ready" | "loading" | "streaming" | "error";
 const defaultClient: ChatCliClient = {
 	listConversations,
 	createConversation,
+	renameConversation,
+	deleteConversation,
 	listMessages,
+	editMessage,
 	streamChat,
 	resumeChatStream,
 	submitApprovalDecisions,
@@ -51,9 +66,14 @@ const helpLines = [
 	"/new              start a new conversation",
 	"/sessions         list recent conversations",
 	"/switch <id|#>    switch by id prefix or list number",
+	"/rename <title>   rename the current conversation",
+	"/delete           delete the current conversation",
 	"/stop             stop the current stream",
 	"/approve          approve all pending tool requests",
 	"/reject           reject all pending tool requests",
+	"/regenerate       regenerate the last assistant response",
+	"/edit <id|#> ...  edit a user message and regenerate",
+	"/get-balance      query DeepSeek account balance",
 	"/help             show commands",
 	"/quit             exit",
 ];
@@ -80,9 +100,12 @@ function toConversationRunState(
 		runId: activeRun.runId,
 		assistantMessageId: activeRun.assistantMessageId,
 		status:
-			activeRun.status === "resuming" || activeRun.status === "resume_queued"
-				? "resuming"
-				: "streaming",
+			activeRun.status === "awaiting_approval"
+				? "awaiting_approval"
+				: activeRun.status === "resuming" ||
+						activeRun.status === "resume_queued"
+					? "resuming"
+					: "streaming",
 		lastEventId: activeRun.lastEventId ?? undefined,
 		approvalBatch: activeRun.approvalBatch ?? undefined,
 	};
@@ -115,6 +138,23 @@ function trimText(text: string, maxLength: number) {
 	}
 
 	return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function resolveMessageTarget(messages: ChatMessage[], target: string) {
+	const index = target.startsWith("#")
+		? Number.parseInt(target.slice(1), 10) - 1
+		: Number.NaN;
+	if (Number.isInteger(index) && messages[index]) {
+		return messages[index];
+	}
+
+	return messages.find((message) => message.id.startsWith(target));
+}
+
+function findLastAssistantMessage(messages: ChatMessage[]) {
+	return [...messages]
+		.reverse()
+		.find((message) => message.role === "assistant");
 }
 
 function getMessageLabel(message: ChatMessage) {
@@ -155,7 +195,13 @@ function getMessageBody(message: ChatMessage) {
 	return message.status === "streaming" ? "thinking..." : "";
 }
 
-function ChatMessageView({ message }: { message: ChatMessage }) {
+function ChatMessageView({
+	displayIndex,
+	message,
+}: {
+	displayIndex: number;
+	message: ChatMessage;
+}) {
 	const label = getMessageLabel(message);
 	const body = getMessageBody(message);
 	const reasoning =
@@ -166,6 +212,7 @@ function ChatMessageView({ message }: { message: ChatMessage }) {
 	return (
 		<Box flexDirection="column" marginBottom={1}>
 			<Text>
+				<Text color="gray">#{displayIndex}</Text>{" "}
 				<Text color={label.color}>{label.marker}</Text>{" "}
 				<Text color={label.color}>{label.text}</Text>
 				{message.status === "streaming" ? (
@@ -236,6 +283,7 @@ export function ChatCliApp({
 	const [conversations, setConversations] = useState<Conversation[]>([]);
 	const [activeConversationId, setActiveConversationId] = useState<string>();
 	const [input, setInput] = useState("");
+	const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
 	const [noticeLines, setNoticeLines] = useState<string[]>(helpLines);
 	const [error, setError] = useState<string>();
 	const [streamState, setStreamState] = useState<CliStreamState>({
@@ -251,7 +299,13 @@ export function ChatCliApp({
 	);
 
 	const activeTitle =
-		streamState.title ?? activeConversation?.title ?? "No conversation";
+		streamState.title ?? activeConversation?.title ?? "New chat";
+	const commandSuggestions = getSlashCommandSuggestions(input);
+	const selectedCommandOptionIndex = commandSuggestions[selectedCommandIndex]
+		? selectedCommandIndex
+		: 0;
+	const selectedCommand =
+		commandSuggestions[selectedCommandOptionIndex] ?? commandSuggestions[0];
 
 	const refreshConversations = useCallback(async () => {
 		const nextConversations = await client.listConversations();
@@ -354,13 +408,12 @@ export function ChatCliApp({
 					return;
 				}
 
-				setConversations(nextConversations);
-				if (nextConversations[0]) {
-					await loadConversation(nextConversations[0]);
-				} else {
-					setPhase("ready");
-					setNoticeLines(["No conversations yet. Type a message to start."]);
-				}
+				const bootState = createFreshCliBootState(nextConversations);
+				setConversations(bootState.conversations);
+				setActiveConversationId(bootState.activeConversationId);
+				setStreamState(bootState.streamState);
+				setNoticeLines(bootState.noticeLines);
+				setPhase("ready");
 			} catch (bootError) {
 				if (!cancelled) {
 					setPhase("error");
@@ -378,7 +431,7 @@ export function ChatCliApp({
 			cancelled = true;
 			abortRef.current?.abort();
 		};
-	}, [client, loadConversation]);
+	}, [client]);
 
 	const stopStreaming = useCallback(() => {
 		const activeRun = streamState.activeRun;
@@ -399,6 +452,73 @@ export function ChatCliApp({
 		setPhase("ready");
 		setNoticeLines(["stream stopped"]);
 	}, [client, streamState.activeRun]);
+
+	const renameActiveConversation = useCallback(
+		async (title: string) => {
+			if (!activeConversationId) {
+				setNoticeLines(["No active conversation to rename."]);
+				return;
+			}
+
+			try {
+				const conversation = await client.renameConversation(
+					activeConversationId,
+					title,
+				);
+				setConversations((items) =>
+					items.map((item) =>
+						item.id === conversation.id ? conversation : item,
+					),
+				);
+				setStreamState((state) => ({ ...state, title: conversation.title }));
+				setNoticeLines([`renamed to ${conversation.title}`]);
+				setError(undefined);
+			} catch (renameError) {
+				setPhase("error");
+				setError(
+					renameError instanceof Error
+						? renameError.message
+						: "Unexpected rename error",
+				);
+			}
+		},
+		[activeConversationId, client],
+	);
+
+	const deleteActiveConversation = useCallback(async () => {
+		if (!activeConversationId) {
+			setNoticeLines(["No active conversation to delete."]);
+			return;
+		}
+
+		try {
+			if (streamState.activeRun) {
+				void client.cancelChatStream(streamState.activeRun.assistantMessageId);
+				abortRef.current?.abort();
+			}
+
+			await client.deleteConversation(activeConversationId);
+			const nextConversations = await refreshConversations();
+			const bootState = createFreshCliBootState(nextConversations);
+			setActiveConversationId(bootState.activeConversationId);
+			setStreamState(bootState.streamState);
+			setNoticeLines(["conversation deleted", ...bootState.noticeLines]);
+			setPhase("ready");
+			setError(undefined);
+		} catch (deleteError) {
+			setPhase("error");
+			setError(
+				deleteError instanceof Error
+					? deleteError.message
+					: "Unexpected delete error",
+			);
+		}
+	}, [
+		activeConversationId,
+		client,
+		refreshConversations,
+		streamState.activeRun,
+	]);
 
 	const sendMessage = useCallback(
 		async (message: string) => {
@@ -489,6 +609,131 @@ export function ChatCliApp({
 		[client, startStream, streamState],
 	);
 
+	const regenerateLastAssistantMessage = useCallback(async () => {
+		if (streamState.activeRun) {
+			setNoticeLines([
+				"A run is active. Use /stop before regenerating the response.",
+			]);
+			return;
+		}
+
+		if (!activeConversationId) {
+			setNoticeLines(["No active conversation to regenerate."]);
+			return;
+		}
+
+		const assistantMessage = findLastAssistantMessage(streamState.messages);
+		if (!assistantMessage) {
+			setNoticeLines(["No assistant message to regenerate."]);
+			return;
+		}
+
+		setStreamState((state) => ({
+			...state,
+			messages: state.messages.map((message) =>
+				message.id === assistantMessage.id
+					? {
+							...message,
+							content: "",
+							reasoning: undefined,
+							toolInvocations: undefined,
+							timelineParts: undefined,
+							status: "streaming",
+						}
+					: message,
+			),
+		}));
+		setNoticeLines([]);
+
+		await startStream((signal, onEvent) =>
+			client.streamChat(
+				{
+					conversationId: activeConversationId,
+					message: "",
+					regenerateFromMessageId: assistantMessage.id,
+				},
+				{ signal, onEvent },
+			),
+		);
+	}, [
+		activeConversationId,
+		client,
+		startStream,
+		streamState.activeRun,
+		streamState.messages,
+	]);
+
+	const editUserMessageAndRegenerate = useCallback(
+		async (target: string, message: string) => {
+			if (streamState.activeRun) {
+				setNoticeLines([
+					"A run is active. Use /stop before editing a message.",
+				]);
+				return;
+			}
+
+			if (!activeConversationId) {
+				setNoticeLines(["No active conversation to edit."]);
+				return;
+			}
+
+			const targetMessage = resolveMessageTarget(streamState.messages, target);
+			if (!targetMessage) {
+				setNoticeLines([`No message matches ${target}.`]);
+				return;
+			}
+
+			if (targetMessage.role !== "user") {
+				setNoticeLines(["Only user messages can be edited."]);
+				return;
+			}
+
+			const messageIndex = streamState.messages.findIndex(
+				(item) => item.id === targetMessage.id,
+			);
+			try {
+				const editedMessage = await client.editMessage(
+					targetMessage.id,
+					message,
+				);
+				setStreamState((state) => ({
+					...state,
+					messages: state.messages
+						.slice(0, messageIndex + 1)
+						.map((item) =>
+							item.id === editedMessage.id ? editedMessage : item,
+						),
+				}));
+				setNoticeLines([]);
+
+				await startStream((signal, onEvent) =>
+					client.streamChat(
+						{
+							conversationId: activeConversationId,
+							message,
+							parentMessageId: targetMessage.id,
+						},
+						{ signal, onEvent },
+					),
+				);
+			} catch (editError) {
+				setPhase("error");
+				setError(
+					editError instanceof Error
+						? editError.message
+						: "Unexpected edit error",
+				);
+			}
+		},
+		[
+			activeConversationId,
+			client,
+			startStream,
+			streamState.activeRun,
+			streamState.messages,
+		],
+	);
+
 	const handleAction = useCallback(
 		async (action: CliInputAction) => {
 			if (action.type === "empty") {
@@ -517,6 +762,16 @@ export function ChatCliApp({
 								)
 						: ["No conversations yet."],
 				);
+				return;
+			}
+
+			if (action.type === "rename") {
+				await renameActiveConversation(action.title);
+				return;
+			}
+
+			if (action.type === "delete") {
+				await deleteActiveConversation();
 				return;
 			}
 
@@ -550,6 +805,16 @@ export function ChatCliApp({
 				return;
 			}
 
+			if (action.type === "regenerate") {
+				await regenerateLastAssistantMessage();
+				return;
+			}
+
+			if (action.type === "edit") {
+				await editUserMessageAndRegenerate(action.target, action.message);
+				return;
+			}
+
 			if (action.type === "unknown") {
 				setNoticeLines([`Unknown command ${action.command}. Type /help.`]);
 				return;
@@ -560,9 +825,13 @@ export function ChatCliApp({
 		[
 			client,
 			conversations,
+			deleteActiveConversation,
+			editUserMessageAndRegenerate,
 			exit,
 			loadConversation,
 			refreshConversations,
+			regenerateLastAssistantMessage,
+			renameActiveConversation,
 			sendMessage,
 			stopStreaming,
 			submitApproval,
@@ -576,14 +845,36 @@ export function ChatCliApp({
 			return;
 		}
 
+		if (commandSuggestions.length > 0 && (key.downArrow || key.upArrow)) {
+			setSelectedCommandIndex((currentIndex) =>
+				getNextSlashCommandIndex({
+					currentIndex,
+					direction: key.downArrow ? "next" : "previous",
+					itemCount: commandSuggestions.length,
+				}),
+			);
+			return;
+		}
+
 		const returnIndex = typedInput.search(/[\r\n]/);
 		if (key.return || returnIndex !== -1) {
+			if (
+				commandSuggestions.length > 0 &&
+				!isExactSlashCommand(input) &&
+				selectedCommand
+			) {
+				setInput(selectedCommand.value);
+				setSelectedCommandIndex(0);
+				return;
+			}
+
 			const submittedInput =
 				returnIndex === -1
 					? input
 					: `${input}${typedInput.slice(0, returnIndex)}`;
 			const action = parseCliInput(submittedInput);
 			setInput("");
+			setSelectedCommandIndex(0);
 			void handleAction(action);
 			return;
 		}
@@ -595,6 +886,7 @@ export function ChatCliApp({
 
 		if (key.ctrl && typedInput === "u") {
 			setInput("");
+			setSelectedCommandIndex(0);
 			return;
 		}
 
@@ -634,12 +926,36 @@ export function ChatCliApp({
 				</Box>
 			) : (
 				<Box flexDirection="column" marginTop={1}>
-					{visibleMessages.map((message) => (
-						<ChatMessageView key={message.id} message={message} />
+					{visibleMessages.map((message, index) => (
+						<ChatMessageView
+							displayIndex={
+								streamState.messages.length - visibleMessages.length + index + 1
+							}
+							key={message.id}
+							message={message}
+						/>
 					))}
 				</Box>
 			)}
 			<ApprovalPanel state={streamState} />
+			{commandSuggestions.length > 0 ? (
+				<Box
+					borderColor="cyan"
+					borderStyle="round"
+					flexDirection="column"
+					paddingX={1}
+				>
+					{commandSuggestions.map((command, index) => (
+						<Text
+							color={index === selectedCommandOptionIndex ? "cyan" : "gray"}
+							key={command.value}
+						>
+							{index === selectedCommandOptionIndex ? "› " : "  "}
+							{command.value} · {command.description}
+						</Text>
+					))}
+				</Box>
+			) : null}
 			<Box marginTop={1}>
 				<Text color="cyan">› </Text>
 				<Text>{input}</Text>
