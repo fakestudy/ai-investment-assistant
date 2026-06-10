@@ -36,7 +36,14 @@ from schema.chat import (
     RunCreatedEvent,
     StreamChatRequest,
 )
-from service import approval_gate, chat_stream, run_events, stream_persistence
+from service import (
+    approval_gate,
+    chat_commands,
+    chat_stream,
+    run_events,
+    stream_persistence,
+)
+from service.deepseek_balance import fetch_deepseek_balance
 from service.sse import to_sse
 
 
@@ -68,6 +75,7 @@ class RunManagerDependencies:
     append_run_event: Any = run_events.append_run_event
     stream_run_events: Any = run_events.stream_run_events
     stream_executor: StreamExecutor = chat_stream.stream_chat
+    fetch_deepseek_balance: Any = fetch_deepseek_balance
     create_task: TaskFactory = asyncio.create_task
     notify_run_event: Any = run_events.notify_run_event
 
@@ -424,6 +432,10 @@ async def _execute_run(
     req: StreamChatRequest,
     deps: RunManagerDependencies,
 ) -> None:
+    if chat_commands.is_get_balance_command(prepared.executor_message or req.message):
+        await _execute_get_balance_command(prepared, deps)
+        return
+
     settings = get_settings()
     can_use_tool = approval_gate.build_can_use_tool(
         approval_gate.RunApprovalContext(
@@ -498,6 +510,31 @@ async def _execute_run(
             status="failed",
             error=event.message,
             message_status="error",
+        )
+
+
+async def _execute_get_balance_command(
+    prepared: _PreparedRun,
+    deps: RunManagerDependencies,
+) -> None:
+    async for event in chat_commands.stream_get_balance_command(
+        message_id=prepared.assistant_message_id,
+        fetch_balance=deps.fetch_deepseek_balance,
+        async_session_factory=deps.async_session_factory,
+    ):
+        if event.type == "done":
+            await _append_terminal_event_and_set_status(
+                prepared,
+                deps,
+                event,
+                status="completed",
+            )
+            return
+        await deps.append_run_event(
+            run_id=prepared.run_id,
+            conversation_id=prepared.conversation_id,
+            message_id=_event_message_id(event) or prepared.assistant_message_id,
+            event=event,
         )
 
 
