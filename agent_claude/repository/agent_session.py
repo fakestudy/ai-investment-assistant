@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from model.agent_session import AgentSession
@@ -39,3 +39,13 @@ async def upsert_agent_session(
         row.updated_at = now
     await session.flush()
     return row
+
+
+async def delete_agent_session_by_conversation_id(
+    session: AsyncSession,
+    conversation_id: str,
+) -> None:
+    await session.execute(
+        delete(AgentSession).where(AgentSession.conversation_id == conversation_id)
+    )
+    await session.flush()

@@ -29,12 +29,53 @@ function jsonHeaders(headers?: HeadersInit) {
 
 export class ChatApiError extends Error {
 	status: number;
+	responseMessage?: string;
 
-	constructor(status: number) {
+	constructor(status: number, responseMessage?: string) {
 		super(`Request failed with status ${status}`);
 		this.name = "ChatApiError";
 		this.status = status;
+		this.responseMessage = responseMessage;
 	}
+}
+
+function getErrorPayloadMessage(payload: unknown): string | undefined {
+	if (!payload || typeof payload !== "object") {
+		return undefined;
+	}
+
+	const record = payload as Record<string, unknown>;
+	if (typeof record.message === "string" && record.message.trim()) {
+		return record.message;
+	}
+
+	if (typeof record.detail === "string" && record.detail.trim()) {
+		return record.detail;
+	}
+
+	return undefined;
+}
+
+async function parseErrorPayloadMessage(
+	response: Response,
+): Promise<string | undefined> {
+	const contentType = response.headers.get("content-type") ?? "";
+	if (!contentType.includes("application/json")) {
+		return undefined;
+	}
+
+	try {
+		return getErrorPayloadMessage(await response.json());
+	} catch {
+		return undefined;
+	}
+}
+
+async function throwChatApiError(response: Response): Promise<never> {
+	throw new ChatApiError(
+		response.status,
+		await parseErrorPayloadMessage(response),
+	);
 }
 
 async function requestJson<T>(
@@ -48,7 +89,7 @@ async function requestJson<T>(
 	});
 
 	if (!response.ok) {
-		throw new ChatApiError(response.status);
+		await throwChatApiError(response);
 	}
 
 	return response.json() as Promise<T>;
@@ -65,7 +106,7 @@ async function requestVoid(
 	});
 
 	if (!response.ok) {
-		throw new ChatApiError(response.status);
+		await throwChatApiError(response);
 	}
 }
 
@@ -210,7 +251,7 @@ export async function streamChat(
 	});
 
 	if (!response.ok) {
-		throw new ChatApiError(response.status);
+		await throwChatApiError(response);
 	}
 
 	await readSseResponse(response, options);
@@ -231,7 +272,7 @@ export async function resumeChatStream(
 	});
 
 	if (!response.ok) {
-		throw new ChatApiError(response.status);
+		await throwChatApiError(response);
 	}
 
 	await readSseResponse(response, options);
@@ -259,7 +300,7 @@ export async function submitApprovalDecisions(
 	);
 
 	if (!response.ok) {
-		throw new ChatApiError(response.status);
+		await throwChatApiError(response);
 	}
 
 	await readSseResponse(response, options);

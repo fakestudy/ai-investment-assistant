@@ -1,12 +1,14 @@
 # Backend 数据表结构
 
-本文档整理当前 Go `backend` 层的数据库表结构。
+本文档整理 Go `backend` 层保留的数据库表结构。
 
-数据表由 GORM `AutoMigrate` 自动创建，模型定义来自 `backend/internal/store/models.go`，迁移入口来自 `backend/internal/store/store.go`。
+> **当前状态**：Go `backend` 暂不参与 `make dev-start` 的本地运行链路，也不承载 Agent runtime。当前实际运行的聊天表由 `agent_claude/migrations/` 管理。本文档只作为未来 Go 业务 BFF 接管业务数据、历史查询和审计查询时的参考。
+
+Go 侧数据表由 GORM `AutoMigrate` 自动创建，模型定义来自 `backend/internal/store/models.go`，迁移入口来自 `backend/internal/store/store.go`。未来接入 Go BFF 前，应重新确认是否继续使用 `AutoMigrate`，还是迁移到显式 SQL migration。
 
 ## 总览
 
-当前后端共注册 4 个持久化模型，因此默认会生成 4 张表：
+Go 后端当前代码共注册 4 个持久化模型，因此默认会生成 4 张表：
 
 | GORM 模型 | 默认表名 | 用途 |
 | --- | --- | --- |
@@ -78,7 +80,9 @@
 
 对应模型：`ToolInvocation`
 
-用途：保存 Agent / LLM 在生成某条消息时发生的工具调用，包括工具名、参数、结果、错误、耗时和状态。
+用途：保存 Agent / LLM 在生成某条消息时发生的工具调用投影，包括工具名、参数、结果、错误、耗时和状态。
+
+Go BFF 接管后，这类表更适合作为业务审计和 UI 查询投影，不应替代 Python Agent 自己的 runtime/session 存储。
 
 | 字段 | Go 类型 | GORM 约束 | 含义 |
 | --- | --- | --- | --- |
@@ -109,6 +113,8 @@
 对应模型：`MessagePart`
 
 用途：保存一条消息内部更细粒度的内容片段，例如文本片段、工具调用相关片段，或未来扩展的结构化 part。
+
+Go BFF 接管后，`message_parts` 仍应被视为前端展示投影；Agent 执行恢复语义由 Python Agent 的 session / workflow 存储负责。
 
 | 字段 | Go 类型 | GORM 约束 | 含义 |
 | --- | --- | --- | --- |
@@ -191,7 +197,7 @@ conversations
 
 ## 当前设计的取舍
 
-当前 4 表设计更偏向“可观测 Agent 对话系统”，而不是最小聊天应用。
+当前 4 表设计更偏向“可观测 Agent 对话系统”的业务投影，而不是最小聊天应用。
 
 优点：
 

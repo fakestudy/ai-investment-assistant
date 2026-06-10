@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.database import AsyncSessionLocal
@@ -13,8 +13,11 @@ from repository.conversation import (
     list_conversations as list_conversation_rows,
     update_conversation_title as update_conversation_title_row,
 )
+from repository import message as message_repository
 from schema.chat import (
+    ApprovalDecisionsRequest,
     ChatConversation,
+    ChatStreamResumeRequest,
     ConversationMessagesResponse,
     DeleteConversationRequest,
     DeleteConversationResponse,
@@ -22,15 +25,23 @@ from schema.chat import (
     UpdateConversationTitleRequest,
 )
 from service.chat import stream_chat
-from service import history
+from service import approval_gate, history
+from service import run_manager
+from service.run_events import stream_run_events
 
 
 async def run_stream_chat(req: StreamChatRequest) -> StreamingResponse:
     return StreamingResponse(
-        stream_chat(
-            conversation_id=req.conversation_id,
-            message=req.message,
-            generate_title=req.generate_title,
+        run_manager.start_chat_run(req),
+        media_type="text/event-stream",
+    )
+
+
+async def resume_chat_stream(req: ChatStreamResumeRequest) -> StreamingResponse:
+    return StreamingResponse(
+        stream_run_events(
+            run_id=req.run_id,
+            after_event_id=req.after_event_id,
         ),
         media_type="text/event-stream",
     )
@@ -104,3 +115,39 @@ async def unsupported_approval_decisions(batch_id: str) -> JSONResponse:
         {"detail": "Claude agent service does not support approvals"},
         status_code=410,
     )
+
+
+async def edit_message(message_id: str, content: str) -> JSONResponse:
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Message content cannot be blank")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            message = await message_repository.edit_user_message(
+                session,
+                message_id=message_id,
+                content=content,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="Message not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await session.commit()
+
+    projected = history._to_chat_message(message)
+    return JSONResponse(projected.model_dump(by_alias=True, exclude_none=True))
+
+
+async def submit_approval_decisions(
+    batch_id: str,
+    req: ApprovalDecisionsRequest,
+) -> StreamingResponse:
+    return StreamingResponse(
+        approval_gate.submit_approval_decisions(batch_id, req),
+        media_type="text/event-stream",
+    )
+
+
+async def cancel_chat_stream(message_id: str) -> Response:
+    await run_manager.cancel_run_by_assistant_message_id(message_id)
+    return Response(status_code=204)

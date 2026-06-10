@@ -181,8 +181,27 @@ const mergeLoadedConversationMessagesById = ({
 	];
 };
 
+const shouldResumeActiveRun = (activeRun: ActiveRunSummary) =>
+	!(
+		activeRun.status === "awaiting_approval" ||
+		activeRun.status === "completed" ||
+		activeRun.status === "failed"
+	);
+
+const resolveResumeCursor = (
+	activeRun: ActiveRunSummary,
+	existingRun: ConversationRunState | undefined,
+) => {
+	if (existingRun?.runId !== activeRun.runId) {
+		return 0;
+	}
+
+	return existingRun.lastEventId ?? 0;
+};
+
 const toConversationRunState = (
 	activeRun: ActiveRunSummary,
+	options?: { lastEventId?: number },
 ): ConversationRunState => ({
 	runId: activeRun.runId,
 	assistantMessageId: activeRun.assistantMessageId,
@@ -192,7 +211,7 @@ const toConversationRunState = (
 			: activeRun.status === "resuming" || activeRun.status === "resume_queued"
 				? "resuming"
 				: "streaming",
-	lastEventId: activeRun.lastEventId ?? undefined,
+	lastEventId: options?.lastEventId ?? activeRun.lastEventId ?? undefined,
 	approvalBatch: activeRun.approvalBatch ?? undefined,
 });
 
@@ -390,6 +409,7 @@ const startStream = async (
 const resumeActiveRun = (
 	conversationId: string,
 	activeRun: ActiveRunSummary | null | undefined,
+	afterEventId: number,
 	set: (
 		partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
 	) => void,
@@ -399,11 +419,7 @@ const resumeActiveRun = (
 		return false;
 	}
 
-	if (
-		activeRun.status === "awaiting_approval" ||
-		activeRun.status === "completed" ||
-		activeRun.status === "failed"
-	) {
+	if (!shouldResumeActiveRun(activeRun)) {
 		return false;
 	}
 
@@ -415,7 +431,7 @@ const resumeActiveRun = (
 				resumeChatStream(
 					{
 						runId: activeRun.runId,
-						afterEventId: activeRun.lastEventId ?? 0,
+						afterEventId,
 					},
 					{ signal, onEvent },
 				),
@@ -503,6 +519,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 		try {
 			const { activeRun, messages } = await listMessages(conversationId);
+			const existingRun = get().runsByConversationId[conversationId];
+			const resumeCursor =
+				activeRun && shouldResumeActiveRun(activeRun)
+					? resolveResumeCursor(activeRun, existingRun)
+					: undefined;
 
 			set((state) => ({
 				messagesByConversationId: {
@@ -518,12 +539,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				runsByConversationId: {
 					...state.runsByConversationId,
 					[conversationId]: activeRun
-						? toConversationRunState(activeRun)
+						? toConversationRunState(activeRun, {
+								lastEventId: resumeCursor,
+							})
 						: undefined,
 				},
 				isLoadingMessages: false,
 			}));
-			resumeActiveRun(conversationId, activeRun, set, get);
+			resumeActiveRun(conversationId, activeRun, resumeCursor ?? 0, set, get);
 		} catch (error) {
 			set({
 				isLoadingMessages: false,

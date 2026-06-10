@@ -30,6 +30,12 @@ def upgrade() -> None:
     op.create_table(
         "messages",
         sa.Column("id", sa.String(), nullable=False),
+        sa.Column(
+            "seq",
+            sa.BigInteger(),
+            sa.Identity(always=False),
+            nullable=False,
+        ),
         sa.Column("conversation_id", sa.String(), nullable=False),
         sa.Column("role", sa.String(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
@@ -42,6 +48,7 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("seq"),
     )
     op.create_index(
         op.f("ix_messages_conversation_id"),

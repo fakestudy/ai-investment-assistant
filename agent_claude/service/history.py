@@ -3,8 +3,13 @@ from datetime import UTC, datetime
 from model.message import Message
 from model.message_part import MessagePart
 from model.tool_invocation import ToolInvocation
+from repository.agent_run import get_active_run_by_conversation_id
+from repository.approval import get_pending_approval_batch_by_run_id
 from repository.message import get_messages_by_conversation_id
 from schema.chat import (
+    ActiveRunSummary,
+    ApprovalBatch,
+    ApprovalRequestSummary,
     ChatMessage,
     ChatConversation,
     ChatTimelinePart,
@@ -29,13 +34,72 @@ async def get_conversation_messages(session, *, conversation_id: str) -> Convers
         session=session,
         conversation_id=conversation_id,
     )
-    return project_conversation_messages(messages)
+    active_run = await get_active_run_by_conversation_id(
+        session=session,
+        conversation_id=conversation_id,
+    )
+    approval_batch = (
+        await get_pending_approval_batch_by_run_id(session=session, run_id=active_run.id)
+        if active_run is not None
+        else None
+    )
+    return project_conversation_messages(
+        messages,
+        active_run=_to_active_run_summary(
+            active_run,
+            approval_batch=approval_batch,
+        )
+        if active_run is not None
+        else None,
+    )
 
 
-def project_conversation_messages(messages: list[Message]) -> ConversationMessagesResponse:
+def project_conversation_messages(
+    messages: list[Message],
+    *,
+    active_run: ActiveRunSummary | None = None,
+) -> ConversationMessagesResponse:
     return ConversationMessagesResponse(
         messages=[_to_chat_message(message) for message in messages],
-        active_run=None,
+        active_run=active_run,
+    )
+
+
+def _to_active_run_summary(run, *, approval_batch=None) -> ActiveRunSummary:
+    return ActiveRunSummary(
+        run_id=run.id,
+        status=run.status,
+        last_event_id=run.last_event_id,
+        assistant_message_id=run.assistant_message_id,
+        approval_batch=_to_approval_batch(approval_batch)
+        if approval_batch is not None
+        else None,
+    )
+
+
+def _to_approval_batch(batch) -> ApprovalBatch:
+    return ApprovalBatch(
+        id=batch.id,
+        status=batch.status,
+        expires_at=_format_optional_datetime(getattr(batch, "expires_at", None)),
+        requests=[
+            ApprovalRequestSummary(
+                id=request.id,
+                tool_invocation_id=request.tool_invocation_id,
+                tool_name=request.tool_name,
+                args=request.args,
+                decision=request.decision,
+                decided_at=_format_optional_datetime(
+                    getattr(request, "decided_at", None)
+                ),
+            )
+            for request in sorted(
+                list(getattr(batch, "requests", []) or []),
+                key=lambda request: request.id,
+            )
+        ],
+        resolution_source=getattr(batch, "resolution_source", None),
+        resolved_at=_format_optional_datetime(getattr(batch, "resolved_at", None)),
     )
 
 
@@ -114,6 +178,12 @@ def _format_datetime(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _format_optional_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return _format_datetime(value)
 
 
 def _safe_datetime(value: datetime) -> datetime:

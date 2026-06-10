@@ -8,7 +8,7 @@
 ## 0. 适用范围
 
 - 仅描述 **`web/` 子项目**（Next.js 前端）的技术选型与落地约束。
-- 后端（Go）、Agent（Python）、proto、docker-compose 等不在本文件范围内，详见 [`PLAN.md`](../docs/project/PLAN.md)。
+- 后端、Agent、proto、docker-compose 等不在本文件范围内，当前/目标架构详见 [`ARCHITECTURE.md`](../docs/project/ARCHITECTURE.md)。
 
 ---
 
@@ -30,9 +30,9 @@
 | 12 | 表单 | **react-hook-form + zod** |
 | 13 | 高级表格 | **@tanstack/react-table** |
 | 14 | 日期 | **date-fns** |
-| 15 | AI 数据层 | **Vercel AI SDK**（`ai` + `@ai-sdk/react`） |
+| 15 | AI 数据层 | **自定义 chat API + JSON SSE + Zustand store** |
 | 16 | AI 对话组件 | **AI Elements**（Vercel 官方，shadcn 模式分发） |
-| 17 | 流式协议 | **AI SDK Data Stream Protocol**（Go gateway 端需输出 `0:"text"\n` 等前缀格式） |
+| 17 | 流式协议 | **项目自定义 JSON SSE**（当前由 `agent_claude` 输出，未来 Go BFF 接管时保持兼容或显式迁移） |
 | 18 | 通用 Markdown | **react-markdown + remark-gfm + rehype-highlight + remark-math + rehype-katex** |
 | 19 | 股价图表 | **lightweight-charts**（TradingView 官方） |
 | 20 | 财务/KPI 图表 | **Recharts** |
@@ -53,7 +53,7 @@
 │  数据层  TanStack Query + Zustand + react-hook-form + zod    │
 │          + @tanstack/react-table + date-fns                  │
 ├─────────────────────────────────────────────────────────────┤
-│  AI 层   Vercel AI SDK + AI Elements                         │
+│  AI 层   AI Elements UI + 自定义 JSON SSE chat store           │
 │          + react-markdown 全家桶（非对话场景）                 │
 ├─────────────────────────────────────────────────────────────┤
 │  图表层  lightweight-charts（K 线）+ Recharts（财务/KPI）     │
@@ -75,8 +75,8 @@
 | 思维链折叠 | AI Elements `<Reasoning>` |
 | 引用来源（财报片段） | AI Elements `<Sources>` |
 | 建议提问（空状态） | AI Elements `<Suggestion>` |
-| 会话状态机 | Vercel AI SDK `useChat` |
-| 后端流式协议 | Go gateway 输出 AI SDK Data Stream Protocol |
+| 会话状态机 | `features/chat/store.ts` 中的 Zustand store |
+| 后端流式协议 | 项目自定义 JSON SSE：`message_created` / `reasoning` / `delta` / `tool_call` / `tool_result` / `title` / `done` / `error` |
 
 ### 3.2 股票分析页（`/stocks/[symbol]`）
 
@@ -125,12 +125,13 @@
    pnpm dlx shadcn@latest add button card dialog input textarea form table sheet scroll-area
    ```
 
-4. **安装 AI SDK + AI Elements**
+4. **安装 AI Elements 相关依赖**
    ```bash
    pnpm add ai @ai-sdk/react
-   pnpm add @ai-sdk/openai   # 或 @ai-sdk/anthropic / @ai-sdk/deepseek，按 PLAN 第 2 节自选
    pnpm dlx ai-elements@latest
    ```
+
+   当前聊天数据层不使用 `useChat` 作为状态机，也不要求后端输出 AI SDK Data Stream Protocol。
 
 5. **安装数据 / 状态 / 表单层**
    ```bash
@@ -163,7 +164,7 @@
 
 2. **AI Elements 同样是 shadcn 模式分发**——组件落到 `components/ai-elements/`，与 `components/ui/` 并列。
 
-3. **Go gateway 必须输出 AI SDK Data Stream Protocol**——这是基于 SSE 的格式，每行带前缀（`0:"text content"\n` 表 token、`9:{toolCall}\n` 表工具调用）。需在 proto 定义阶段同步给后端。
+3. **当前流式协议是项目自定义 JSON SSE**——每个 SSE `data:` 里是一条 `ChatStreamEvent` JSON。当前输出方是 `agent_claude`；未来 Go BFF 接管 `/api/*` 后，要么保持该事件契约，要么先做一次明确的前后端协议迁移，不要静默切到 AI SDK Data Stream Protocol。
 
 4. **Biome 默认风格与 shadcn 不一致**——必须设 `quoteStyle: "double"`、`semicolons: "always"`，否则首次 `format` 会触发成片变更，污染 git diff。
 
@@ -188,14 +189,14 @@ web/
 │   │   └── [symbol]/
 │   │       └── page.tsx            # 股票分析页
 │   └── api/
-│       └── chat/route.ts           # 转发到 Go gateway 的薄层（如直接走 Go，可不要）
+│       └── ...                     # 默认不写业务 API route
 ├── components/
 │   ├── ui/                         # shadcn/ui 生成
 │   ├── ai-elements/                # AI Elements 生成
 │   ├── chat/                       # 业务对话组件
 │   └── stocks/                     # 股票分析业务组件
 ├── lib/
-│   ├── api.ts                      # 调 Go gateway 的 fetch 封装
+│   ├── api.ts                      # 调 /api 的 fetch/SSE 封装
 │   ├── query-client.ts             # TanStack Query
 │   └── store/                      # Zustand store
 ├── biome.json
@@ -204,7 +205,7 @@ web/
 └── package.json
 ```
 
-注意：所有 API 一律调 Go gateway，**禁止在 `app/api/` 下写后端业务逻辑**——这是 [PLAN.md 第 3.1 节](../docs/project/PLAN.md) 的硬约束。
+注意：当前所有 API 走 `/api/*`，经 Nginx 代理到 `agent_claude`。未来 Go BFF 接管后，前端仍优先保持 `/api/*` 调用路径不变。**不要在 `web/app/api/` 下补业务后端逻辑**；真正后端能力应放在当前 `agent_claude` 或未来 Go BFF。
 
 ---
 
@@ -220,6 +221,6 @@ web/
 
 ## 8. 与 PLAN.md 的关联
 
-- 本文件等于 PLAN 第 2 节"技术栈"的前端展开版。
+- 本文件等于 PLAN 第 2 节"技术栈"的前端展开版，并以 ARCHITECTURE 当前/目标链路为边界。
 - PLAN 第 9.1 节将 Next.js 页面骨架划入 C 档；本文件将**整个前端**划入 C 档（AI 全包），属于对 PLAN 的局部变更，需在 PLAN 第 14 节同步登记。
 - 第 4 周末出 demo 的硬节点（PLAN 第 5 节）由本文件的栈兜底实现。

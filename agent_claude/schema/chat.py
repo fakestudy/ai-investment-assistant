@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
 class FrontendModel(BaseModel):
@@ -61,8 +61,33 @@ class ToolTimelinePart(FrontendModel):
     invocation: ToolInvocation
 
 
+class ApprovalRequestSummary(FrontendModel):
+    id: str
+    tool_invocation_id: str = Field(alias="toolInvocationId")
+    tool_name: str = Field(alias="toolName")
+    args: dict[str, Any]
+    decision: Literal["pending", "approved", "rejected", "expired"]
+    decided_at: str | None = Field(default=None, alias="decidedAt")
+
+
+class ApprovalBatch(FrontendModel):
+    id: str
+    status: Literal["pending", "resolved", "expired"]
+    expires_at: str | None = Field(default=None, alias="expiresAt")
+    requests: list[ApprovalRequestSummary] = Field(default_factory=list)
+    resolution_source: str | None = Field(default=None, alias="resolutionSource")
+    resolved_at: str | None = Field(default=None, alias="resolvedAt")
+
+
+class ApprovalTimelinePart(FrontendModel):
+    id: str
+    type: Literal["approval"]
+    order_index: int | None = Field(default=None, alias="orderIndex")
+    batch: ApprovalBatch
+
+
 ChatTimelinePart = Annotated[
-    ReasoningTimelinePart | ToolTimelinePart,
+    ReasoningTimelinePart | ToolTimelinePart | ApprovalTimelinePart,
     Field(discriminator="type"),
 ]
 
@@ -85,11 +110,6 @@ class ChatMessage(FrontendModel):
     created_at: str = Field(alias="createdAt")
 
 
-class ConversationMessagesResponse(FrontendModel):
-    messages: list[ChatMessage]
-    active_run: None = Field(default=None, alias="activeRun")
-
-
 class StreamChatRequest(FrontendModel):
     conversation_id: str = Field(alias="conversationId")
     message: str
@@ -99,6 +119,54 @@ class StreamChatRequest(FrontendModel):
         default=None,
         alias="regenerateFromMessageId",
     )
+
+
+class ActiveRunSummary(FrontendModel):
+    run_id: str = Field(alias="runId")
+    status: Literal[
+        "queued",
+        "running",
+        "awaiting_approval",
+        "resume_queued",
+        "resuming",
+        "completed",
+        "failed",
+    ]
+    last_event_id: int | None = Field(default=None, alias="lastEventId")
+    assistant_message_id: str = Field(alias="assistantMessageId")
+    approval_batch: ApprovalBatch | None = Field(default=None, alias="approvalBatch")
+
+
+class ConversationMessagesResponse(FrontendModel):
+    messages: list[ChatMessage]
+    active_run: ActiveRunSummary | None = Field(default=None, alias="activeRun")
+
+
+class ChatStreamResumeRequest(FrontendModel):
+    run_id: str = Field(alias="runId")
+    after_event_id: int = Field(alias="afterEventId")
+
+
+class EditMessageRequest(FrontendModel):
+    content: str
+
+
+class ApprovalDecision(FrontendModel):
+    approval_request_id: str = Field(alias="approvalRequestId")
+    decision: Literal["approve", "reject"]
+
+
+class ApprovalDecisionsRequest(FrontendModel):
+    decisions: list[ApprovalDecision]
+    after_event_id: int = Field(alias="afterEventId")
+
+
+class RunCreatedEvent(FrontendModel):
+    type: Literal["run_created"]
+    run_id: str = Field(alias="runId")
+    conversation_id: str = Field(alias="conversationId")
+    assistant_message_id: str = Field(alias="assistantMessageId")
+    status: Literal["running"]
 
 
 class MessageCreatedEvent(FrontendModel):
@@ -155,16 +223,36 @@ class TitleEvent(FrontendModel):
     title: str
 
 
+class ApprovalRequiredEvent(FrontendModel):
+    type: Literal["approval_required"]
+    run_id: str = Field(alias="runId")
+    message_id: str = Field(alias="messageId")
+    part: ApprovalTimelinePart
+    approval_batch: ApprovalBatch | None = Field(default=None, alias="approvalBatch")
+
+
+class ApprovalResolvedEvent(FrontendModel):
+    type: Literal["approval_resolved"]
+    run_id: str = Field(alias="runId")
+    message_id: str | None = Field(default=None, alias="messageId")
+    batch: ApprovalBatch
+    approval_batch: ApprovalBatch | None = Field(default=None, alias="approvalBatch")
+
+
 ChatStreamResponse = Annotated[
-    MessageCreatedEvent
+    RunCreatedEvent
+    | MessageCreatedEvent
     | ReasoningEvent
     | DeltaEvent
     | DoneEvent
     | ErrorEvent
     | ToolCallEvent
     | ToolResultEvent
-    | TitleEvent,
+    | TitleEvent
+    | ApprovalRequiredEvent
+    | ApprovalResolvedEvent,
     Field(discriminator="type"),
 ]
 
 ChatStreamEvent = ChatStreamResponse
+ChatStreamEventAdapter = TypeAdapter(ChatStreamEvent)

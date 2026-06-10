@@ -112,6 +112,60 @@ test("listMessages returns backend messages envelope with activeRun", async () =
 	assert.equal(response.activeRun?.runId, "run-1");
 });
 
+test("editMessage patches message content", async () => {
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		return new Response(
+			JSON.stringify({
+				id: "user-1",
+				conversationId: "conversation-1",
+				role: "user",
+				content: "updated question",
+				status: "done",
+				createdAt: "2026-01-01T00:00:00.000Z",
+			}),
+			{
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	};
+	const { editMessage } = await loadApi();
+
+	const response = await editMessage("user-1", "updated question");
+
+	assert.equal(
+		String(calls[0].input),
+		"http://localhost:3000/api/messages/user-1",
+	);
+	assert.equal(calls[0].init?.method, "PATCH");
+	assert.equal(
+		calls[0].init?.body,
+		JSON.stringify({ content: "updated question" }),
+	);
+	assert.equal(response.content, "updated question");
+});
+
+test("cancelChatStream posts cancel URL", async () => {
+	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+		[];
+	globalThis.fetch = async (input, init) => {
+		calls.push({ input, init });
+		return new Response(null, { status: 204 });
+	};
+	const { cancelChatStream } = await loadApi();
+
+	await cancelChatStream("assistant-1");
+
+	assert.equal(
+		String(calls[0].input),
+		"http://localhost:3000/api/chat/streams/assistant-1/cancel",
+	);
+	assert.equal(calls[0].init?.method, "POST");
+});
+
 test("resumeChatStream uses POST run cursor payload", async () => {
 	const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
 		[];
@@ -246,5 +300,26 @@ test("stream endpoints throw ChatApiError with status on conflict", async () => 
 				{ signal: new AbortController().signal, onEvent: () => undefined },
 			),
 		(error) => error instanceof ChatApiError && error.status === 409,
+	);
+});
+
+test("json endpoints preserve backend detail without changing safe error message", async () => {
+	globalThis.fetch = async () =>
+		new Response(
+			JSON.stringify({ detail: "Only user messages can be edited" }),
+			{
+				status: 400,
+				headers: { "Content-Type": "application/json" },
+			},
+		);
+	const { ChatApiError, editMessage } = await loadApi();
+
+	await assert.rejects(
+		() => editMessage("assistant-1", "updated"),
+		(error) =>
+			error instanceof ChatApiError &&
+			error.status === 400 &&
+			error.responseMessage === "Only user messages can be edited" &&
+			error.message === "Request failed with status 400",
 	);
 });

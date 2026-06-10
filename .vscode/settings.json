@@ -7,7 +7,7 @@
     "Eino",
     "uvicorn"
   ],
-  "python.defaultInterpreterPath": "${workspaceFolder}/agent/.venv/bin/python",
+  "python.defaultInterpreterPath": "/Users/bytedance/Desktop/agent/ai-investment-assistant/agent_claude/.venv/bin/python",
   "python.terminal.activateEnvironment": false,
   "clang-format.executable": "/opt/homebrew/bin/clang-format",
   "[proto]": {

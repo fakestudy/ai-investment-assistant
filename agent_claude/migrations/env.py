@@ -15,6 +15,9 @@ for model_module in (
     "model.message_part",
     "model.agent_session",
     "model.agent_session_entry",
+    "model.agent_run",
+    "model.agent_run_event",
+    "model.approval",
 ):
     import_module(model_module)
 

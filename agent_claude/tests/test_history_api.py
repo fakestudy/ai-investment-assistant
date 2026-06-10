@@ -15,6 +15,7 @@ from schema.chat import (
     ConversationMessagesResponse,
     ToolInvocation,
 )
+from service import history
 from service.history import project_conversation_messages
 
 
@@ -43,6 +44,8 @@ class HistoryProjectionTest(unittest.TestCase):
         self.assertIn("/api/conversation/delete", paths)
         self.assertIn("/api/chat/stream/resume", paths)
         self.assertIn("/api/chat/approval/decisions/{batch_id}", paths)
+        self.assertIn("/api/messages/{message_id}", paths)
+        self.assertIn("/api/chat/streams/{message_id}/cancel", paths)
 
     def test_history_route_returns_projected_messages(self) -> None:
         from main import app
@@ -90,6 +93,134 @@ class HistoryProjectionTest(unittest.TestCase):
                         "createdAt": "2026-06-08T04:00:00Z",
                     }
                 ],
+            },
+        )
+
+    def test_history_route_returns_active_run_projection(self) -> None:
+        from main import app
+
+        class FakeSessionContext:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def fake_get_messages(session, *, conversation_id: str):
+            return ConversationMessagesResponse(
+                messages=[],
+                activeRun={
+                    "runId": "run-1",
+                    "status": "running",
+                    "assistantMessageId": "assistant-1",
+                    "lastEventId": 12,
+                },
+            )
+
+        with (
+            patch("controller.chat.AsyncSessionLocal", lambda: FakeSessionContext()),
+            patch("service.history.get_conversation_messages", fake_get_messages),
+        ):
+            response = TestClient(app).get("/api/conversation/messages/conversation-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "messages": [],
+                "activeRun": {
+                    "runId": "run-1",
+                    "status": "running",
+                    "assistantMessageId": "assistant-1",
+                    "lastEventId": 12,
+                },
+            },
+        )
+
+    def test_get_conversation_messages_projects_pending_approval_batch(self) -> None:
+        now = datetime(2026, 6, 8, 4, 0, tzinfo=UTC)
+        run = SimpleNamespace(
+            id="run-1",
+            status="awaiting_approval",
+            last_event_id=42,
+            assistant_message_id="assistant-1",
+        )
+        batch = SimpleNamespace(
+            id="batch-1",
+            status="pending",
+            expires_at=now,
+            requests=[
+                SimpleNamespace(
+                    id="request-1",
+                    tool_invocation_id="tool-1",
+                    tool_name="WebFetch",
+                    args={"url": "https://example.com"},
+                    decision="pending",
+                    decided_at=None,
+                )
+            ],
+            resolution_source=None,
+            resolved_at=None,
+        )
+
+        async def fake_get_messages_by_conversation_id(session, *, conversation_id):
+            return []
+
+        async def fake_get_active_run_by_conversation_id(session, *, conversation_id):
+            return run
+
+        async def fake_get_pending_approval_batch_by_run_id(session, *, run_id):
+            self.assertEqual(run_id, "run-1")
+            return batch
+
+        with (
+            patch.object(
+                history,
+                "get_messages_by_conversation_id",
+                fake_get_messages_by_conversation_id,
+            ),
+            patch.object(
+                history,
+                "get_active_run_by_conversation_id",
+                fake_get_active_run_by_conversation_id,
+            ),
+            patch.object(
+                history,
+                "get_pending_approval_batch_by_run_id",
+                fake_get_pending_approval_batch_by_run_id,
+            ),
+        ):
+            response = asyncio.run(
+                history.get_conversation_messages(
+                    object(),
+                    conversation_id="conversation-1",
+                )
+            )
+
+        self.assertEqual(
+            response.model_dump(by_alias=True, exclude_none=True),
+            {
+                "messages": [],
+                "activeRun": {
+                    "runId": "run-1",
+                    "status": "awaiting_approval",
+                    "lastEventId": 42,
+                    "assistantMessageId": "assistant-1",
+                    "approvalBatch": {
+                        "id": "batch-1",
+                        "status": "pending",
+                        "expiresAt": "2026-06-08T04:00:00Z",
+                        "requests": [
+                            {
+                                "id": "request-1",
+                                "toolInvocationId": "tool-1",
+                                "toolName": "WebFetch",
+                                "args": {"url": "https://example.com"},
+                                "decision": "pending",
+                            }
+                        ],
+                    },
+                },
             },
         )
 

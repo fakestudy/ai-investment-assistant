@@ -2,7 +2,7 @@ from datetime import datetime
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -17,6 +17,12 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    seq: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(always=False),
+        nullable=False,
+        unique=True,
+    )
     conversation_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("conversations.id", ondelete="CASCADE"),

@@ -108,7 +108,7 @@ else
   fail "pnpm 未安装 (期望 $PNPM_EXPECT)"
 fi
 
-# uv: agent 依赖与启动入口
+# uv: agent_claude 依赖与启动入口
 UV_EXPECT="0.11.7"
 if command -v uv >/dev/null 2>&1; then
   UV_VER="$(uv --version 2>/dev/null | awk '{print $2}')"
@@ -118,7 +118,7 @@ if command -v uv >/dev/null 2>&1; then
     warn "uv $UV_VER (期望 $UV_EXPECT)"
   fi
 else
-  fail "uv 未安装 (agent 启动必需)"
+  fail "uv 未安装 (agent_claude 启动必需)"
 fi
 
 # ---------------- 3. 环境变量 ----------------
@@ -140,7 +140,7 @@ else
 fi
 
 # 必填
-REQUIRED_VARS=(DEEPSEEK_API_KEY TAVILY_API_KEY)
+REQUIRED_VARS=(ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL)
 for var in "${REQUIRED_VARS[@]}"; do
   val="${!var:-}"
   [[ -z "$val" ]] && val="$(load_env_value "$var")"
@@ -148,9 +148,9 @@ for var in "${REQUIRED_VARS[@]}"; do
     ok "$var 已设置"
   else
     if (( ENV_FILE_EXISTS == 1 )); then
-      fail "$var 未设置 (必填，需在 .env 中填入有效 key)"
+      fail "$var 未设置 (必填，需在 .env 中填入有效值)"
     else
-      fail "$var 未设置 (必填，请先创建 .env 并填入有效 key)"
+      fail "$var 未设置 (必填，请先创建 .env 并填入有效值)"
     fi
   fi
 done
@@ -158,16 +158,7 @@ done
 # 提示性
 OPTIONAL_VARS=(
   DATABASE_URL
-  DEEPSEEK_BASE_URL
-  DEEPSEEK_MODEL
-  DEEPSEEK_TIMEOUT_SECONDS
   BFF_HTTP_ADDR
-  RABBITMQ_URL
-  AGENT_WORKER_ID
-  AGENT_RUN_LEASE_SECONDS
-  OUTBOX_POLL_INTERVAL_MS
-  TAVILY_BASE_URL
-  FETCH_ALLOW_PRIVATE
 )
 for var in "${OPTIONAL_VARS[@]}"; do
   val="${!var:-}"
@@ -209,12 +200,10 @@ fi
 
 check_port 3001 "web/Next.js"       fail
 if [[ -n "$BACKEND_HTTP_PORT" ]]; then
-  check_port "$BACKEND_HTTP_PORT" "agent/FastAPI" fail
+  check_port "$BACKEND_HTTP_PORT" "agent_claude/FastAPI" fail
 fi
 check_port 3000 "nginx/reverse proxy" fail
 check_port 5432 "postgres"          warn
-check_port 5672 "rabbitmq/amqp"     warn
-check_port 15672 "rabbitmq/management" warn
 
 # ---------------- 5. 汇总 ----------------
 section "汇总"
