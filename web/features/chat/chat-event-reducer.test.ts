@@ -115,13 +115,18 @@ test("reasoning event appends reasoning text and timeline part", () => {
 
 	assert.equal(nextState.messages[0]?.reasoning, "thinking");
 	assert.equal(nextState.messages[0]?.timelineParts?.[0]?.type, "reasoning");
+	assert.equal(nextState.messages[0]?.timelineItems?.[0]?.type, "thought");
 	if (nextState.messages[0]?.timelineParts?.[0]?.type === "reasoning") {
 		assert.equal(nextState.messages[0].timelineParts[0].text, "thinking");
 		assert.equal(nextState.messages[0].timelineParts[0].id, "reasoning-42");
 	}
+	if (nextState.messages[0]?.timelineItems?.[0]?.type === "thought") {
+		assert.equal(nextState.messages[0].timelineItems[0].text, "thinking");
+		assert.equal(nextState.messages[0].timelineItems[0].id, "reasoning-42");
+	}
 });
 
-test("tool events upsert tool invocation and timeline part", () => {
+test("tool events upsert tool invocation and timeline item", () => {
 	const runningState = reduceChatStreamEvent(baseState(), {
 		eventId: 42,
 		event: {
@@ -162,15 +167,82 @@ test("tool events upsert tool invocation and timeline part", () => {
 	);
 	assert.equal(completedState.messages[0]?.timelineParts?.length, 1);
 	assert.equal(completedState.messages[0]?.timelineParts?.[0]?.type, "tool");
+	assert.equal(completedState.messages[0]?.timelineItems?.length, 1);
+	assert.equal(completedState.messages[0]?.timelineItems?.[0]?.type, "tool");
 	if (completedState.messages[0]?.timelineParts?.[0]?.type === "tool") {
 		assert.equal(
 			completedState.messages[0].timelineParts[0].invocation.status,
 			"completed",
 		);
 	}
+	if (completedState.messages[0]?.timelineItems?.[0]?.type === "tool") {
+		assert.equal(
+			completedState.messages[0].timelineItems[0].invocation.status,
+			"completed",
+		);
+	}
 });
 
-test("approval_required upserts approval card and moves run to awaiting approval", () => {
+test("approval_required marks matching tool item and moves run to awaiting approval", () => {
+	const stateWithTool = reduceChatStreamEvent(
+		{
+			...baseState(),
+			activeRun: {
+				runId: "run-1",
+				assistantMessageId: "assistant-1",
+				status: "streaming",
+				lastEventId: 40,
+			},
+		},
+		{
+			eventId: 41,
+			event: {
+				type: "tool_call",
+				runId: "run-1",
+				messageId: "assistant-1",
+				invocation: {
+					id: "tool-1",
+					messageId: "assistant-1",
+					toolName: "get_weather",
+					args: { city: "Beijing" },
+					status: "running",
+				},
+			},
+		},
+	);
+
+	const nextState = reduceChatStreamEvent(stateWithTool, {
+		eventId: 42,
+		event: {
+			type: "approval_required",
+			runId: "run-1",
+			messageId: "assistant-1",
+			part: pendingApprovalPart,
+		},
+	});
+
+	assert.equal(nextState.activeRun?.status, "awaiting_approval");
+	assert.equal(nextState.activeRun?.lastEventId, 42);
+	assert.deepEqual(
+		nextState.activeRun?.approvalBatch,
+		pendingApprovalPart.batch,
+	);
+	assert.equal(
+		nextState.messages[0]?.timelineParts?.some(
+			(part) => part.type === "approval",
+		),
+		false,
+	);
+	const item = nextState.messages[0]?.timelineItems?.[0];
+	assert.equal(item?.type, "tool");
+	if (item?.type === "tool") {
+		assert.equal(item.invocation.status, "awaiting_approval");
+		assert.equal(item.approval?.requestId, "request-1");
+		assert.equal(item.approval?.batchId, "batch-1");
+	}
+});
+
+test("approval_required creates a tool item when approval arrives before tool_call", () => {
 	const nextState = reduceChatStreamEvent(
 		{
 			...baseState(),
@@ -192,16 +264,17 @@ test("approval_required upserts approval card and moves run to awaiting approval
 		},
 	);
 
-	assert.equal(nextState.activeRun?.status, "awaiting_approval");
-	assert.equal(nextState.activeRun?.lastEventId, 41);
-	assert.deepEqual(
-		nextState.activeRun?.approvalBatch,
-		pendingApprovalPart.batch,
-	);
-	assert.deepEqual(nextState.messages[0]?.timelineParts, [pendingApprovalPart]);
+	const item = nextState.messages[0]?.timelineItems?.[0];
+	assert.equal(item?.type, "tool");
+	if (item?.type === "tool") {
+		assert.equal(item.invocation.id, "tool-1");
+		assert.equal(item.invocation.toolName, "get_weather");
+		assert.equal(item.invocation.status, "awaiting_approval");
+		assert.equal(item.approval?.requestId, "request-1");
+	}
 });
 
-test("approval_resolved marks card readonly and moves run to resuming", () => {
+test("approval_resolved marks tool approval readonly and moves run to resuming", () => {
 	const resolvedBatch = {
 		...pendingApprovalPart.batch,
 		status: "resolved" as const,
@@ -221,7 +294,26 @@ test("approval_resolved marks card readonly and moves run to resuming", () => {
 			messages: [
 				{
 					...baseState().messages[0],
-					timelineParts: [pendingApprovalPart],
+					timelineItems: [
+						{
+							id: "tool-1",
+							type: "tool" as const,
+							invocation: {
+								id: "tool-1",
+								messageId: "assistant-1",
+								toolName: "get_weather",
+								args: { city: "Beijing" },
+								status: "awaiting_approval" as const,
+							},
+							approval: {
+								batchId: "batch-1",
+								requestId: "request-1",
+								status: "pending" as const,
+								decision: "pending" as const,
+								expiresAt: "2026-01-01T00:30:00.000Z",
+							},
+						},
+					],
 				},
 			],
 			activeRun: {
@@ -245,10 +337,11 @@ test("approval_resolved marks card readonly and moves run to resuming", () => {
 	assert.equal(nextState.activeRun?.status, "resuming");
 	assert.equal(nextState.activeRun?.lastEventId, 42);
 	assert.equal(nextState.activeRun?.approvalBatch?.status, "resolved");
-	const part = nextState.messages[0]?.timelineParts?.[0];
-	assert.equal(part?.type, "approval");
-	if (part?.type === "approval") {
-		assert.equal(part.batch.requests[0]?.decision, "approved");
+	const item = nextState.messages[0]?.timelineItems?.[0];
+	assert.equal(item?.type, "tool");
+	if (item?.type === "tool") {
+		assert.equal(item.approval?.status, "resolved");
+		assert.equal(item.approval?.decision, "approved");
 	}
 });
 

@@ -1,7 +1,15 @@
 export const INITIAL_VISIBLE_MESSAGE_COUNT = 80;
 export const VISIBLE_MESSAGE_BATCH_SIZE = 80;
 
-import type { ApprovalBatch, ChatTimelinePart, ToolInvocation } from "./types";
+import type {
+	ApprovalBatch,
+	ApprovalRequest,
+	ChatTimelinePart,
+	RunTimelineItem,
+	ToolApprovalState,
+	ToolInvocation,
+	ToolInvocationStatus,
+} from "./types";
 
 type ActiveStreamingState = {
 	activeConversationId?: string;
@@ -45,6 +53,7 @@ type StreamCreatedMessage = {
 	reasoning?: string;
 	toolInvocations?: unknown[];
 	timelineParts?: unknown[];
+	timelineItems?: unknown[];
 };
 
 type LoadedConversationMessages<T> = {
@@ -186,6 +195,171 @@ export function upsertToolTimelinePart(
 		index === existingIndex && part.type === "tool"
 			? { ...part, invocation: { ...part.invocation, ...invocation } }
 			: part,
+	);
+}
+
+export function appendThoughtTimelineItem(
+	items: readonly RunTimelineItem[] | undefined,
+	input: { id: string; text: string },
+): RunTimelineItem[] {
+	const currentItems = items ?? [];
+	const lastItem = currentItems.at(-1);
+
+	if (lastItem?.type === "thought") {
+		return currentItems.map((item, index) =>
+			index === currentItems.length - 1 && item.type === "thought"
+				? { ...item, text: `${item.text}${input.text}` }
+				: item,
+		);
+	}
+
+	return [
+		...currentItems,
+		{
+			id: input.id,
+			type: "thought",
+			text: input.text,
+		},
+	];
+}
+
+export function upsertToolTimelineItem(
+	items: readonly RunTimelineItem[] | undefined,
+	invocation: ToolInvocation,
+): RunTimelineItem[] {
+	const currentItems = items ?? [];
+	const existingIndex = currentItems.findIndex(
+		(item) => item.type === "tool" && item.invocation.id === invocation.id,
+	);
+
+	if (existingIndex === -1) {
+		return [
+			...currentItems,
+			{
+				id: invocation.id,
+				type: "tool",
+				invocation,
+			},
+		];
+	}
+
+	return currentItems.map((item, index) =>
+		index === existingIndex && item.type === "tool"
+			? { ...item, invocation: { ...item.invocation, ...invocation } }
+			: item,
+	);
+}
+
+function toolStatusFromApprovalRequest(
+	request: ApprovalRequest,
+	batch: ApprovalBatch,
+): ToolInvocationStatus {
+	if (request.decision === "approved") {
+		return "running";
+	}
+	if (request.decision === "rejected") {
+		return "rejected";
+	}
+	if (request.decision === "expired" || batch.status === "expired") {
+		return "expired";
+	}
+	return "awaiting_approval";
+}
+
+function toToolApprovalState(
+	batch: ApprovalBatch,
+	request: ApprovalRequest,
+): ToolApprovalState {
+	return {
+		batchId: batch.id,
+		requestId: request.id,
+		status: batch.status,
+		decision: request.decision,
+		expiresAt: batch.expiresAt,
+		decidedAt: request.decidedAt,
+	};
+}
+
+function toApprovalInvocation(
+	batch: ApprovalBatch,
+	request: ApprovalRequest,
+	messageId: string,
+): ToolInvocation {
+	return {
+		id: request.toolInvocationId,
+		messageId,
+		toolName: request.toolName,
+		args: request.args,
+		status: toolStatusFromApprovalRequest(request, batch),
+	};
+}
+
+function mergeToolStatusWithApproval(
+	currentStatus: ToolInvocationStatus,
+	batch: ApprovalBatch,
+	request: ApprovalRequest,
+): ToolInvocationStatus {
+	if (currentStatus === "completed" || currentStatus === "error") {
+		return currentStatus;
+	}
+
+	return toolStatusFromApprovalRequest(request, batch);
+}
+
+export function upsertApprovalBatchIntoTimelineItems(
+	items: readonly RunTimelineItem[] | undefined,
+	batch: ApprovalBatch,
+	options: { messageId: string; orderIndex?: number },
+): RunTimelineItem[] {
+	let nextItems = [...(items ?? [])];
+
+	for (const request of batch.requests) {
+		const itemIndex = nextItems.findIndex(
+			(item) =>
+				item.type === "tool" && item.invocation.id === request.toolInvocationId,
+		);
+		const approval = toToolApprovalState(batch, request);
+
+		if (itemIndex === -1) {
+			nextItems = [
+				...nextItems,
+				{
+					id: `approval-tool-${request.toolInvocationId}`,
+					type: "tool",
+					orderIndex: options.orderIndex,
+					invocation: toApprovalInvocation(batch, request, options.messageId),
+					approval,
+				},
+			];
+			continue;
+		}
+
+		nextItems = nextItems.map((item, index) =>
+			index === itemIndex && item.type === "tool"
+				? {
+						...item,
+						invocation: {
+							...item.invocation,
+							status: mergeToolStatusWithApproval(
+								item.invocation.status,
+								batch,
+								request,
+							),
+						},
+						approval,
+					}
+				: item,
+		);
+	}
+
+	return nextItems;
+}
+
+export function getRenderableTimelineItems(
+	items: readonly RunTimelineItem[] | undefined,
+): RunTimelineItem[] {
+	return [...(items ?? [])].sort(
+		(first, second) => (first.orderIndex ?? 0) - (second.orderIndex ?? 0),
 	);
 }
 

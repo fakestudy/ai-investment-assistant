@@ -92,6 +92,36 @@ ChatTimelinePart = Annotated[
 ]
 
 
+class ToolApprovalState(FrontendModel):
+    batch_id: str = Field(alias="batchId")
+    request_id: str = Field(alias="requestId")
+    status: Literal["pending", "resolved", "expired"]
+    decision: Literal["pending", "approved", "rejected", "expired"]
+    expires_at: str | None = Field(default=None, alias="expiresAt")
+    decided_at: str | None = Field(default=None, alias="decidedAt")
+
+
+class ThoughtTimelineItem(FrontendModel):
+    id: str
+    type: Literal["thought"]
+    order_index: int | None = Field(default=None, alias="orderIndex")
+    text: str
+
+
+class ToolRunTimelineItem(FrontendModel):
+    id: str
+    type: Literal["tool"]
+    order_index: int | None = Field(default=None, alias="orderIndex")
+    invocation: ToolInvocation
+    approval: ToolApprovalState | None = None
+
+
+RunTimelineItem = Annotated[
+    ThoughtTimelineItem | ToolRunTimelineItem,
+    Field(discriminator="type"),
+]
+
+
 class ChatMessage(FrontendModel):
     id: str
     conversation_id: str = Field(alias="conversationId")
@@ -105,6 +135,10 @@ class ChatMessage(FrontendModel):
     timeline_parts: list[ChatTimelinePart] = Field(
         default_factory=list,
         alias="timelineParts",
+    )
+    timeline_items: list[RunTimelineItem] = Field(
+        default_factory=list,
+        alias="timelineItems",
     )
     status: Literal["idle", "streaming", "done", "error"] | None = None
     created_at: str = Field(alias="createdAt")

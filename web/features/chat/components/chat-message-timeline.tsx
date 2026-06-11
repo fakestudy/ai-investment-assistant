@@ -1,12 +1,12 @@
 "use client";
 
 import {
-	BrainIcon,
-	CheckCircleIcon,
+	FileTextIcon,
+	Globe2Icon,
+	LinkIcon,
 	ListTreeIcon,
-	ShieldIcon,
+	SearchIcon,
 	WrenchIcon,
-	XCircleIcon,
 } from "lucide-react";
 import { useCallback } from "react";
 import { useStickToBottomContext } from "use-stick-to-bottom";
@@ -17,60 +17,124 @@ import {
 	ReasoningTrigger,
 	useReasoning,
 } from "@/components/ai-elements/reasoning";
-import { getRenderableTimelineParts } from "../chat-ui-state";
-import type { ChatMessage, ChatTimelinePart } from "../types";
-import { ApprovalCard } from "./approval-card";
+import {
+	getRenderableTimelineItems,
+	getRenderableTimelineParts,
+} from "../chat-ui-state";
+import type { ChatMessage, RunTimelineItem, ToolInvocation } from "../types";
 import { shouldReleaseChatStickinessForReasoningToggle } from "./chat-reasoning-scroll-state";
-import { ToolInvocationCard } from "./tool-invocation-card";
 
 type ChatMessageTimelineProps = {
 	message: ChatMessage;
 	isStreaming: boolean;
 };
 
-function getTimelineParts(message: ChatMessage): ChatTimelinePart[] {
-	if (message.timelineParts?.length) {
-		return getRenderableTimelineParts(message.timelineParts);
+function getTimelineItems(message: ChatMessage): RunTimelineItem[] {
+	if (message.timelineItems?.length) {
+		return getRenderableTimelineItems(message.timelineItems);
 	}
 
-	const parts: ChatTimelinePart[] = [];
+	if (message.timelineParts?.length) {
+		const legacyItems: RunTimelineItem[] = getRenderableTimelineParts(
+			message.timelineParts,
+		).flatMap<RunTimelineItem>((part) => {
+			if (part.type === "reasoning") {
+				return [
+					{
+						id: part.id,
+						type: "thought" as const,
+						orderIndex: part.orderIndex,
+						text: part.text,
+					},
+				];
+			}
+			if (part.type === "tool") {
+				return [
+					{
+						id: part.id,
+						type: "tool" as const,
+						orderIndex: part.orderIndex,
+						invocation: part.invocation,
+					},
+				];
+			}
+			return [];
+		});
+		if (legacyItems.length > 0) {
+			return legacyItems;
+		}
+	}
+
+	const items: RunTimelineItem[] = [];
 	if (message.reasoning) {
-		parts.push({
+		items.push({
 			id: `${message.id}-reasoning`,
-			type: "reasoning",
+			type: "thought",
 			text: message.reasoning,
 		});
 	}
 
 	for (const invocation of message.toolInvocations ?? []) {
-		parts.push({
+		items.push({
 			id: invocation.id,
 			type: "tool",
 			invocation,
 		});
 	}
 
-	return parts;
+	return items;
 }
 
-function getApprovalTimelineLabel(
-	part: Extract<ChatTimelinePart, { type: "approval" }>,
-) {
-	const requestedTools = part.batch.requests
-		.map((request) => request.toolName)
-		.join(", ");
-	const status =
-		part.batch.status === "pending"
-			? "Awaiting approval"
-			: part.batch.status === "expired"
-				? "Approval expired"
-				: "Approval resolved";
+function getToolIcon(toolName: string) {
+	const normalizedName = toolName.toLowerCase();
+	if (normalizedName.includes("search")) {
+		return SearchIcon;
+	}
+	if (normalizedName.includes("fetch") || normalizedName.includes("url")) {
+		return LinkIcon;
+	}
+	if (normalizedName.includes("web")) {
+		return Globe2Icon;
+	}
+	if (normalizedName.includes("file") || normalizedName.includes("read")) {
+		return FileTextIcon;
+	}
+	return WrenchIcon;
+}
 
+const toolStatusText: Record<ToolInvocation["status"], string> = {
+	running: "运行中",
+	completed: "完成",
+	error: "失败",
+	awaiting_approval: "等待审批",
+	rejected: "已拒绝",
+	expired: "已过期",
+};
+
+function formatToolArgs(args: Record<string, unknown>) {
+	return JSON.stringify(args);
+}
+
+function ToolTimelineLabel({
+	item,
+}: {
+	item: Extract<RunTimelineItem, { type: "tool" }>;
+}) {
 	return (
-		<div className="space-y-1">
-			<p className="font-medium text-foreground">{status}</p>
-			{requestedTools ? (
-				<p className="text-muted-foreground">Tools: {requestedTools}</p>
+		<div className="min-w-0 space-y-2">
+			<div className="flex flex-wrap items-center gap-2">
+				<span className="font-medium text-foreground">
+					{item.invocation.toolName}
+				</span>
+				<span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-600">
+					{toolStatusText[item.invocation.status]}
+				</span>
+			</div>
+			<div className="max-w-full overflow-x-auto rounded-lg bg-zinc-50 px-3 py-2 font-mono text-[12px] text-zinc-600">
+				{formatToolArgs(item.invocation.args)}
+			</div>
+			{item.invocation.error ? (
+				<p className="text-red-600 text-xs">{item.invocation.error}</p>
 			) : null}
 		</div>
 	);
@@ -78,7 +142,8 @@ function getApprovalTimelineLabel(
 
 export function hasTimelineDetails(message: ChatMessage) {
 	return Boolean(
-		message.timelineParts?.length ||
+		message.timelineItems?.length ||
+			message.timelineParts?.some((part) => part.type !== "approval") ||
 			message.reasoning ||
 			message.toolInvocations?.length,
 	);
@@ -88,9 +153,9 @@ export function ChatMessageTimeline({
 	message,
 	isStreaming,
 }: ChatMessageTimelineProps) {
-	const parts = getTimelineParts(message);
+	const items = getTimelineItems(message);
 
-	if (parts.length === 0) {
+	if (items.length === 0) {
 		return null;
 	}
 
@@ -99,45 +164,20 @@ export function ChatMessageTimeline({
 			<ChatReasoningTrigger />
 			<ReasoningContent>
 				<div className="space-y-3">
-					{parts.map((part) =>
-						part.type === "reasoning" ? (
-							<ChainOfThoughtStep
-								icon={BrainIcon}
-								key={part.id}
-								label={
-									<p className="whitespace-pre-wrap text-muted-foreground">
-										{part.text}
-									</p>
-								}
-							/>
-						) : part.type === "approval" ? (
-							<ChainOfThoughtStep
-								icon={
-									part.batch.status === "pending"
-										? ShieldIcon
-										: part.batch.status === "expired"
-											? XCircleIcon
-											: CheckCircleIcon
-								}
-								key={part.id}
-								label={getApprovalTimelineLabel(part)}
+					{items.map((item) =>
+						item.type === "thought" ? (
+							<p
+								className="whitespace-pre-wrap text-muted-foreground text-sm"
+								key={item.id}
 							>
-								<ApprovalCard
-									batch={part.batch}
-									conversationId={message.conversationId}
-								/>
-							</ChainOfThoughtStep>
+								{item.text}
+							</p>
 						) : (
 							<ChainOfThoughtStep
-								icon={WrenchIcon}
-								key={part.id}
-								label={part.invocation.toolName}
-							>
-								<ToolInvocationCard
-									hideHeaderIcon
-									invocation={part.invocation}
-								/>
-							</ChainOfThoughtStep>
+								icon={getToolIcon(item.invocation.toolName)}
+								key={item.id}
+								label={<ToolTimelineLabel item={item} />}
+							/>
 						),
 					)}
 				</div>

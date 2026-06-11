@@ -3,7 +3,9 @@ import test from "node:test";
 import type { ApprovalBatch } from "../types";
 import {
 	type ApprovalSelections,
+	applyApprovalSelection,
 	canSubmitApproval,
+	createBatchApprovalSelections,
 	isApprovalReadOnly,
 } from "./approval-card-state";
 
@@ -76,4 +78,18 @@ test("submit ignores unknown selections and read only batches", () => {
 
 	assert.equal(canSubmitApproval(resolvedBatch, selections), false);
 	assert.equal(canSubmitApproval(expiredBatch, selections), false);
+});
+
+test("applyApprovalSelection updates only the clicked request", () => {
+	const selections = applyApprovalSelection({ r1: "approve" }, "r2", "reject");
+
+	assert.deepEqual(selections, { r1: "approve", r2: "reject" });
+	assert.equal(canSubmitApproval(pendingBatch, selections), true);
+});
+
+test("createBatchApprovalSelections applies one decision to every request", () => {
+	const selections = createBatchApprovalSelections(pendingBatch, "approve");
+
+	assert.deepEqual(selections, { r1: "approve", r2: "approve" });
+	assert.equal(canSubmitApproval(pendingBatch, selections), true);
 });

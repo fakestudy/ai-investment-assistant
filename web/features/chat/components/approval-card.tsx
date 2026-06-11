@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 import { useChatStore } from "../store";
 import type { ApprovalBatch } from "../types";
 import {
-	type ApprovalSelections,
 	type ApprovalSubmissionDecision,
+	createBatchApprovalSelections,
 	isApprovalReadOnly,
 	toApprovalDecisionLabel,
 } from "./approval-card-state";
@@ -70,6 +70,8 @@ export function ApprovalCard({
 	const immediateDisabled =
 		isSubmitting || readOnly || batch.requests.length === 0;
 	const decisionButtonsClassName = "grid grid-cols-2 gap-3";
+	const approveLabel = batch.requests.length > 1 ? "批准全部" : "批准";
+	const rejectLabel = batch.requests.length > 1 ? "拒绝全部" : "拒绝";
 
 	const submitImmediateDecision = async (
 		decision: ApprovalSubmissionDecision,
@@ -78,10 +80,7 @@ export function ApprovalCard({
 			return;
 		}
 
-		const nextSelections = Object.fromEntries(
-			batch.requests.map((request) => [request.id, decision]),
-		) as ApprovalSelections;
-
+		const nextSelections = createBatchApprovalSelections(batch, decision);
 		setIsSubmitting(true);
 		setSubmittingDecision(decision);
 		try {
@@ -201,34 +200,36 @@ export function ApprovalCard({
 						>
 							{formatJson(request.args)}
 						</pre>
-
-						{readOnly ? null : (
-							<fieldset
-								className={cn(!isFloating && "mt-3", decisionButtonsClassName)}
-								data-decision-layout={isFloating ? "banner" : "inline"}
-							>
-								<legend className="sr-only">工具：{request.toolName}</legend>
-								<ImmediateDecisionButton
-									disabled={immediateDisabled}
-									isSubmitting={submittingDecision === "approve"}
-									label="批准"
-									layout="banner"
-									onClick={() => void submitImmediateDecision("approve")}
-									value="approve"
-								/>
-								<ImmediateDecisionButton
-									disabled={immediateDisabled}
-									isSubmitting={submittingDecision === "reject"}
-									label="拒绝"
-									layout="banner"
-									onClick={() => void submitImmediateDecision("reject")}
-									value="reject"
-								/>
-							</fieldset>
-						)}
 					</div>
 				))}
 			</div>
+
+			{readOnly ? null : (
+				<fieldset
+					className={cn(isFloating ? "mt-3" : "mt-4", decisionButtonsClassName)}
+					data-decision-layout={isFloating ? "banner" : "inline"}
+				>
+					<legend className="sr-only">
+						工具：{batch.requests.map((request) => request.toolName).join("、")}
+					</legend>
+					<ImmediateDecisionButton
+						disabled={immediateDisabled}
+						isSubmitting={submittingDecision === "approve"}
+						label={approveLabel}
+						layout={isFloating ? "banner" : "inline"}
+						onClick={() => void submitImmediateDecision("approve")}
+						value="approve"
+					/>
+					<ImmediateDecisionButton
+						disabled={immediateDisabled}
+						isSubmitting={submittingDecision === "reject"}
+						label={rejectLabel}
+						layout={isFloating ? "banner" : "inline"}
+						onClick={() => void submitImmediateDecision("reject")}
+						value="reject"
+					/>
+				</fieldset>
+			)}
 		</div>
 	);
 }

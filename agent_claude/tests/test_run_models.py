@@ -161,6 +161,57 @@ class _RunEventSession:
 
 
 class RunRepositoryBehaviorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_append_approval_request_to_batch_adds_pending_request(
+        self,
+    ) -> None:
+        from model.approval import ApprovalBatch, ApprovalRequest
+        from repository.approval import append_approval_request_to_batch
+
+        now = datetime(2026, 6, 9, 10, 0, tzinfo=UTC)
+        batch = ApprovalBatch(
+            id="batch-1",
+            run_id="run-1",
+            message_id="message-1",
+            status="pending",
+            expires_at=now,
+            created_at=now,
+        )
+        batch.requests = [
+            ApprovalRequest(
+                id="request-1",
+                approval_batch_id="batch-1",
+                tool_invocation_id="tool-1",
+                tool_name="Read",
+                args={},
+                decision="pending",
+                created_at=now,
+            )
+        ]
+        request = ApprovalRequest(
+            id="request-2",
+            approval_batch_id="",
+            tool_invocation_id="tool-2",
+            tool_name="WebFetch",
+            args={"url": "https://example.com"},
+            decision="pending",
+            created_at=now,
+        )
+        session = _ApprovalSession(batch)
+
+        result = await append_approval_request_to_batch(
+            session,
+            batch_id="batch-1",
+            request=request,
+        )
+
+        self.assertIs(result, batch)
+        self.assertEqual(request.approval_batch_id, "batch-1")
+        self.assertEqual(
+            [item.tool_invocation_id for item in batch.requests],
+            ["tool-1", "tool-2"],
+        )
+        self.assertEqual(session.flushes, 1)
+
     async def test_resolve_approval_batch_requires_complete_valid_decisions(
         self,
     ) -> None:

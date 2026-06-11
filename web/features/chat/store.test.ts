@@ -937,7 +937,7 @@ test("selectConversation merges active server message parts with local streaming
 	);
 });
 
-test("selectConversation projects active approval batch into assistant timeline", async () => {
+test("selectConversation keeps backend approval on tool timeline items", async () => {
 	const { useChatStore } = await loadStore();
 
 	useChatStore.setState({
@@ -972,6 +972,27 @@ test("selectConversation projects active approval batch into assistant timeline"
 										toolName: "WebSearch",
 										args: { query: "Apple earnings" },
 										status: "running",
+									},
+								},
+							],
+							timelineItems: [
+								{
+									id: "tool-part-1",
+									type: "tool",
+									orderIndex: 1,
+									invocation: {
+										id: "tool-1",
+										messageId: "assistant-1",
+										toolName: "WebSearch",
+										args: { query: "Apple earnings" },
+										status: "awaiting_approval",
+									},
+									approval: {
+										batchId: "batch-1",
+										requestId: "request-1",
+										status: "pending",
+										decision: "pending",
+										expiresAt: "2026-01-01T00:30:00.000Z",
 									},
 								},
 							],
@@ -1016,15 +1037,18 @@ test("selectConversation projects active approval batch into assistant timeline"
 
 	await useChatStore.getState().selectConversation("conversation-1");
 
-	const parts =
-		useChatStore.getState().messagesByConversationId["conversation-1"]?.[0]
-			?.timelineParts ?? [];
+	const message =
+		useChatStore.getState().messagesByConversationId["conversation-1"]?.[0];
+	const parts = message?.timelineParts ?? [];
 	const approvalPart = parts.find((part) => part.type === "approval");
+	const item = message?.timelineItems?.[0];
 
-	assert.equal(approvalPart?.type, "approval");
-	if (approvalPart?.type === "approval") {
-		assert.equal(approvalPart.batch.id, "batch-1");
-		assert.equal(approvalPart.batch.requests[0]?.toolName, "WebSearch");
+	assert.equal(approvalPart, undefined);
+	assert.equal(item?.type, "tool");
+	if (item?.type === "tool") {
+		assert.equal(item.approval?.batchId, "batch-1");
+		assert.equal(item.approval?.requestId, "request-1");
+		assert.equal(item.invocation.toolName, "WebSearch");
 	}
 	assert.equal(
 		useChatStore.getState().runsByConversationId["conversation-1"]?.status,
@@ -1133,13 +1157,15 @@ test("stream reducer handles run and approval lifecycle events", async () => {
 		useChatStore.getState().messagesByConversationId["conversation-1"]?.[1];
 	assert.equal(assistant?.id, "assistant-1");
 	assert.equal(assistant.status, "done");
-	assert.equal(assistant.timelineParts?.[0]?.type, "approval");
-	if (assistant.timelineParts?.[0]?.type === "approval") {
-		assert.equal(assistant.timelineParts[0].batch.status, "resolved");
-		assert.equal(
-			assistant.timelineParts[0].batch.requests[0]?.decision,
-			"approved",
-		);
+	assert.equal(
+		assistant.timelineParts?.some((part) => part.type === "approval") ?? false,
+		false,
+	);
+	const item = assistant.timelineItems?.[0];
+	assert.equal(item?.type, "tool");
+	if (item?.type === "tool") {
+		assert.equal(item.approval?.status, "resolved");
+		assert.equal(item.approval?.decision, "approved");
 	}
 });
 
@@ -1365,13 +1391,13 @@ test("submitApproval posts selections from run cursor and resumes stream", async
 		useChatStore.getState().runsByConversationId["conversation-1"],
 		undefined,
 	);
-	const approvalPart =
+	const item =
 		useChatStore.getState().messagesByConversationId["conversation-1"]?.[0]
-			?.timelineParts?.[0];
-	assert.equal(approvalPart?.type, "approval");
-	if (approvalPart?.type === "approval") {
-		assert.equal(approvalPart.batch.status, "resolved");
-		assert.equal(approvalPart.batch.requests[0]?.decision, "approved");
+			?.timelineItems?.[0];
+	assert.equal(item?.type, "tool");
+	if (item?.type === "tool") {
+		assert.equal(item.approval?.status, "resolved");
+		assert.equal(item.approval?.decision, "approved");
 	}
 });
 

@@ -13,6 +13,7 @@ import {
 	submitApprovalDecisions,
 } from "./api";
 import { reduceChatStreamEvent } from "./chat-event-reducer";
+import { upsertApprovalBatchIntoTimelineItems } from "./chat-ui-state";
 import type { ApprovalSelections } from "./components/approval-card-state";
 import type {
 	ActiveRunSummary,
@@ -20,7 +21,6 @@ import type {
 	ChatError,
 	ChatMessage,
 	ChatStreamEvent,
-	ChatTimelinePart,
 	Conversation,
 	ConversationRunState,
 	ReceivedChatStreamEvent,
@@ -127,6 +127,7 @@ const resetAssistantMessageForRegeneration = (
 	reasoning: undefined,
 	toolInvocations: undefined,
 	timelineParts: undefined,
+	timelineItems: undefined,
 	status: "streaming",
 });
 
@@ -149,34 +150,23 @@ const mergeTimelinePartsById = (
 	];
 };
 
-const upsertApprovalTimelinePart = (
-	parts: ChatMessage["timelineParts"],
-	batch: ApprovalBatch,
-): ChatTimelinePart[] => {
-	const currentParts = parts ?? [];
-	const partIndex = currentParts.findIndex(
-		(part) => part.type === "approval" && part.batch.id === batch.id,
-	);
-	const currentApprovalPart = currentParts[partIndex];
-	const nextPart: Extract<ChatTimelinePart, { type: "approval" }> =
-		currentApprovalPart?.type !== "approval"
-			? {
-					id: `approval-${batch.id}`,
-					type: "approval",
-					batch,
-				}
-			: {
-					...currentApprovalPart,
-					batch,
-				};
-
-	if (partIndex === -1) {
-		return [...currentParts, nextPart];
+const mergeTimelineItemsById = (
+	loadedItems: ChatMessage["timelineItems"],
+	existingItems: ChatMessage["timelineItems"],
+) => {
+	if (!loadedItems?.length) {
+		return existingItems;
 	}
 
-	return currentParts.map((part, index) =>
-		index === partIndex ? nextPart : part,
-	);
+	if (!existingItems?.length) {
+		return loadedItems;
+	}
+
+	const loadedItemIds = new Set(loadedItems.map((item) => item.id));
+	return [
+		...loadedItems,
+		...existingItems.filter((item) => !loadedItemIds.has(item.id)),
+	];
 };
 
 const projectActiveApprovalBatch = (
@@ -192,9 +182,10 @@ const projectActiveApprovalBatch = (
 		message.id === activeRun.assistantMessageId
 			? {
 					...message,
-					timelineParts: upsertApprovalTimelinePart(
-						message.timelineParts,
+					timelineItems: upsertApprovalBatchIntoTimelineItems(
+						message.timelineItems,
 						approvalBatch,
+						{ messageId: message.id },
 					),
 				}
 			: message,
@@ -238,6 +229,10 @@ const mergeLoadedConversationMessagesById = ({
 				timelineParts: mergeTimelinePartsById(
 					loadedMessage.timelineParts,
 					existingMessage.timelineParts,
+				),
+				timelineItems: mergeTimelineItemsById(
+					loadedMessage.timelineItems,
+					existingMessage.timelineItems,
 				),
 			};
 		}),
@@ -315,6 +310,37 @@ const findApprovalBatchInMessages = (
 	batchId: string,
 ): ApprovalBatch | undefined => {
 	for (const message of messages) {
+		const toolItems =
+			message.timelineItems?.filter(
+				(item) =>
+					item.type === "tool" &&
+					item.approval?.batchId === batchId &&
+					item.approval.status === "pending",
+			) ?? [];
+		if (toolItems.length > 0) {
+			const firstApproval =
+				toolItems[0]?.type === "tool" ? toolItems[0].approval : undefined;
+			return {
+				id: batchId,
+				status: firstApproval?.status ?? "pending",
+				expiresAt: firstApproval?.expiresAt ?? "",
+				requests: toolItems.flatMap((item) =>
+					item.type === "tool" && item.approval
+						? [
+								{
+									id: item.approval.requestId,
+									toolInvocationId: item.invocation.id,
+									toolName: item.invocation.toolName,
+									args: item.invocation.args,
+									decision: item.approval.decision,
+									decidedAt: item.approval.decidedAt,
+								},
+							]
+						: [],
+				),
+			};
+		}
+
 		const batch = message.timelineParts?.find(
 			(part) => part.type === "approval" && part.batch.id === batchId,
 		);

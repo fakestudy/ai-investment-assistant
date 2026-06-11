@@ -23,6 +23,26 @@ export function canSubmitApproval(
 	);
 }
 
+export function applyApprovalSelection(
+	selections: ApprovalSelections,
+	requestId: string,
+	decision: ApprovalSubmissionDecision,
+): ApprovalSelections {
+	return {
+		...selections,
+		[requestId]: decision,
+	};
+}
+
+export function createBatchApprovalSelections(
+	batch: ApprovalBatch,
+	decision: ApprovalSubmissionDecision,
+): ApprovalSelections {
+	return Object.fromEntries(
+		batch.requests.map((request) => [request.id, decision]),
+	) as ApprovalSelections;
+}
+
 export function toApprovalDecisionLabel(
 	decision: ApprovalBatch["requests"][number]["decision"],
 ) {

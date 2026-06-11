@@ -380,6 +380,11 @@
 			color: var(--red-text);
 		}
 
+		.status.selected {
+			background: #f4f4f5;
+			color: #3f3f46;
+		}
+
 		.trace-text {
 			margin: 3px 0 0;
 			color: #71717a;
@@ -496,13 +501,31 @@
 			white-space: nowrap;
 		}
 
+		.approval-request {
+			margin-top: 12px;
+			border-top: 1px solid var(--border-soft);
+			padding-top: 12px;
+		}
+
+		.approval-request:first-of-type {
+			margin-top: 10px;
+			border-top: 0;
+			padding-top: 0;
+		}
+
+		.approval-request-title {
+			margin: 0;
+			color: #3f3f46;
+			font-size: 13px;
+			font-weight: 650;
+		}
+
 		.approval-actions {
 			display: grid;
-			grid-column: 2;
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 			flex-shrink: 0;
 			gap: 8px;
-			margin-top: -2px;
+			margin-top: 8px;
 		}
 
 		.action-btn {
@@ -535,6 +558,10 @@
 			border-color: var(--red-border);
 			background: var(--red-bg);
 			color: var(--red-text);
+		}
+
+		.action-btn.selected {
+			box-shadow: inset 0 0 0 1px currentColor;
 		}
 
 		.composer {
@@ -617,7 +644,6 @@
 			}
 
 			.approval-actions {
-				grid-column: 1 / -1;
 				width: 100%;
 			}
 
@@ -693,6 +719,23 @@
 												</div>
 											</li>
 
+											<li class="trace-tool">
+												<span class="tool-icon" aria-hidden="true">
+													<svg fill="none" viewBox="0 0 24 24">
+														<path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" stroke="currentColor" stroke-linecap="round"></path>
+														<path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1" stroke="currentColor" stroke-linecap="round"></path>
+													</svg>
+												</span>
+												<div class="trace-main">
+													<div class="trace-head">
+														<span class="trace-name">FetchUrl</span>
+														<span class="status waiting" id="fetchStatus">awaiting approval</span>
+													</div>
+													<p class="trace-text" id="fetchText">需要打开公告详情页，等待你批准后继续执行。</p>
+													<span class="trace-args">{"url":"https://www.tencent.com/ir/announcements"}</span>
+												</div>
+											</li>
+
 											<li>
 												<p class="trace-note" id="answerText">等待工具结果，避免在证据不足时先给结论。</p>
 											</li>
@@ -714,14 +757,25 @@
 							<div class="approval-left">
 								<div class="approval-icon">!</div>
 								<div>
-									<p class="approval-title">WebSearch 请求审批</p>
-									<p class="approval-meta">批准后继续执行工具；拒绝后本轮会以受限信息结束。</p>
-									<div class="approval-code">{"query":"腾讯控股 财报 回购 监管 2026 最新公告"}</div>
+									<p class="approval-title">2 个工具请求审批</p>
+									<p class="approval-meta">同一暂停点里可以有多个工具请求。每个工具选择批准或拒绝，全部选择后继续。</p>
+									<div class="approval-request">
+										<p class="approval-request-title">WebSearch</p>
+										<div class="approval-code">{"query":"腾讯控股 财报 回购 监管 2026 最新公告"}</div>
+										<div class="approval-actions">
+											<button class="action-btn approve request-action" data-decision="approve" data-request="web" type="button">批准</button>
+											<button class="action-btn reject request-action" data-decision="reject" data-request="web" type="button">拒绝</button>
+										</div>
+									</div>
+									<div class="approval-request">
+										<p class="approval-request-title">FetchUrl</p>
+										<div class="approval-code">{"url":"https://www.tencent.com/ir/announcements"}</div>
+										<div class="approval-actions">
+											<button class="action-btn approve request-action" data-decision="approve" data-request="fetch" type="button">批准</button>
+											<button class="action-btn reject request-action" data-decision="reject" data-request="fetch" type="button">拒绝</button>
+										</div>
+									</div>
 								</div>
-							</div>
-							<div class="approval-actions">
-								<button class="action-btn approve" id="approveBtn" type="button">批准</button>
-								<button class="action-btn reject" id="rejectBtn" type="button">拒绝</button>
 							</div>
 						</section>
 
@@ -740,16 +794,18 @@
 		const runPanel = document.querySelector("#runPanel");
 		const toggleTimeline = document.querySelector("#toggleTimeline");
 		const approvalDock = document.querySelector("#approvalDock");
-		const approveBtn = document.querySelector("#approveBtn");
-		const rejectBtn = document.querySelector("#rejectBtn");
+		const requestActions = Array.from(document.querySelectorAll(".request-action"));
 		const runChip = document.querySelector("#runChip");
 		const processLabel = document.querySelector("#processLabel");
 		const processTime = document.querySelector("#processTime");
 		const toolStatus = document.querySelector("#toolStatus");
 		const toolText = document.querySelector("#toolText");
+		const fetchStatus = document.querySelector("#fetchStatus");
+		const fetchText = document.querySelector("#fetchText");
 		const answerText = document.querySelector("#answerText");
 		const answer = document.querySelector("#answer");
 		const input = document.querySelector("#input");
+		const selections = {};
 
 		function setStatus(element, status, text) {
 			element.className = `status ${status}`;
@@ -765,50 +821,83 @@
 			runPanel.classList.toggle("collapsed");
 		});
 
-		approveBtn.addEventListener("click", () => {
+		function applySelections() {
 			approvalDock.classList.add("hidden");
 			runChip.textContent = "Resuming";
 			runChip.className = "run-chip";
 			processLabel.textContent = "正在处理";
 			processTime.textContent = "24s";
-			setStatus(toolStatus, "running", "running");
-			toolText.textContent = "审批已通过，正在执行 WebSearch。";
+			const webApproved = selections.web === "approve";
+			const fetchApproved = selections.fetch === "approve";
+
+			setStatus(
+				toolStatus,
+				webApproved ? "running" : "rejected",
+				webApproved ? "running" : "rejected",
+			);
+			toolText.textContent = webApproved
+				? "审批已通过，正在执行 WebSearch。"
+				: "你拒绝了 WebSearch，本轮不会执行外部搜索。";
+			setStatus(
+				fetchStatus,
+				fetchApproved ? "running" : "rejected",
+				fetchApproved ? "running" : "rejected",
+			);
+			fetchText.textContent = fetchApproved
+				? "审批已通过，正在打开公告详情页。"
+				: "你拒绝了 FetchUrl，本轮不会打开公告详情页。";
 
 			window.setTimeout(() => {
-				setStatus(toolStatus, "done", "completed");
-				toolText.textContent = "已获取最新公告、回购和监管变化摘要。";
-				answerText.textContent = "正在生成结论。";
+				if (webApproved) {
+					setStatus(toolStatus, "done", "completed");
+					toolText.textContent = "已获取最新公告、回购和监管变化摘要。";
+				}
+				if (fetchApproved) {
+					setStatus(fetchStatus, "done", "completed");
+					fetchText.textContent = "已打开公告详情页并提取要点。";
+				}
+				answerText.textContent =
+					webApproved || fetchApproved
+						? "正在基于已批准工具的结果生成结论。"
+						: "没有可用外部证据，正在生成受限结论。";
 				processTime.textContent = "31s";
 			}, 650);
 
 			window.setTimeout(() => {
 				answerText.textContent = "回答已生成。";
-				runChip.textContent = "Completed";
-				runChip.className = "run-chip completed";
+				runChip.textContent =
+					webApproved && fetchApproved ? "Completed" : "Limited answer";
+				runChip.className =
+					webApproved && fetchApproved ? "run-chip completed" : "run-chip limited";
 				processLabel.textContent = "已处理";
 				processTime.textContent = "36s";
-				answer.innerHTML = `
-					<p><strong>初步判断：</strong>短期催化主要来自回购节奏和业绩兑现，监管变化目前更像估值约束而不是明确正催化。</p>
-					<p>下一步应验证三点：利润修复是否持续、回购是否足以改善每股收益、监管新闻是否改变风险偏好。</p>
-				`;
+				answer.innerHTML =
+					webApproved && fetchApproved
+						? `
+							<p><strong>初步判断：</strong>短期催化主要来自回购节奏和业绩兑现，监管变化目前更像估值约束而不是明确正催化。</p>
+							<p>下一步应验证三点：利润修复是否持续、回购是否足以改善每股收益、监管新闻是否改变风险偏好。</p>
+						`
+						: `
+							<p><strong>受限判断：</strong>我只使用了你批准的工具结果，未批准的工具不会执行。</p>
+							<p>因此结论需要标注证据缺口：${webApproved ? "" : "缺少外部搜索摘要；"}${fetchApproved ? "" : "缺少公告详情页提取；"}</p>
+						`;
 				unlockInput();
 			}, 1300);
-		});
+		}
 
-		rejectBtn.addEventListener("click", () => {
-			approvalDock.classList.add("hidden");
-			setStatus(toolStatus, "rejected", "rejected");
-			toolText.textContent = "你拒绝了 WebSearch，本轮不会执行外部检索。";
-			answerText.textContent = "已输出受限结论。";
-			runChip.textContent = "Limited answer";
-			runChip.className = "run-chip limited";
-			processLabel.textContent = "已处理";
-			processTime.textContent = "19s";
-			answer.innerHTML = `
-				<p><strong>受限判断：</strong>我不能确认最新财报、回购和监管变化，只能给出研究框架。</p>
-				<p>这个问题的第一优先级不是直接判断涨跌，而是先验证最新官方披露是否支持催化假设。</p>
-			`;
-			unlockInput();
+		requestActions.forEach((button) => {
+			button.addEventListener("click", () => {
+				const request = button.dataset.request;
+				const decision = button.dataset.decision;
+				selections[request] = decision;
+				requestActions
+					.filter((item) => item.dataset.request === request)
+					.forEach((item) => item.classList.remove("selected"));
+				button.classList.add("selected");
+				if (selections.web && selections.fetch) {
+					applySelections();
+				}
+			});
 		});
 	</script>
 </body>

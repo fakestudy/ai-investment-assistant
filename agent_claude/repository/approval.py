@@ -25,6 +25,30 @@ async def create_approval_batch(
     return batch
 
 
+async def append_approval_request_to_batch(
+    session: AsyncSession,
+    *,
+    batch_id: str,
+    request: ApprovalRequest,
+) -> ApprovalBatch:
+    result = await session.execute(
+        select(ApprovalBatch)
+        .where(ApprovalBatch.id == batch_id)
+        .options(selectinload(ApprovalBatch.requests))
+        .with_for_update()
+    )
+    batch = result.scalar_one_or_none()
+    if batch is None:
+        raise LookupError(f"ApprovalBatch not found: {batch_id}")
+    if batch.status != "pending":
+        raise ValueError("Approval batch is already resolved")
+
+    request.approval_batch_id = batch.id
+    batch.requests.append(request)
+    await session.flush()
+    return batch
+
+
 async def get_pending_approval_batch_by_run_id(
     session: AsyncSession,
     *,

@@ -15,7 +15,11 @@ from model.approval import ApprovalBatch as ApprovalBatchModel
 from model.approval import ApprovalRequest as ApprovalRequestModel
 from repository.agent_run import update_run_status
 from repository.agent_run_event import append_run_event as append_run_event_row
-from repository.approval import create_approval_batch, resolve_approval_batch
+from repository.approval import (
+    append_approval_request_to_batch,
+    create_approval_batch,
+    resolve_approval_batch,
+)
 from schema.chat import (
     ApprovalBatch,
     ApprovalDecisionsRequest,
@@ -28,8 +32,11 @@ from service import run_events
 
 
 DecisionMap = dict[str, str]
+ApprovalGroupKey = tuple[str, str]
 
 _approval_futures: dict[str, asyncio.Future[DecisionMap]] = {}
+_pending_approval_groups: dict[ApprovalGroupKey, "_PendingApprovalGroup"] = {}
+_APPROVAL_GROUPING_DELAY_SECONDS = 0.02
 
 
 def _uuid_str() -> str:
@@ -44,6 +51,7 @@ def _utcnow() -> datetime:
 class ApprovalGateDependencies:
     async_session_factory: Any = AsyncSessionLocal
     create_approval_batch: Any = create_approval_batch
+    append_approval_request_to_batch: Any = append_approval_request_to_batch
     resolve_approval_batch: Any = resolve_approval_batch
     update_run_status: Any = update_run_status
     append_run_event_row: Any = append_run_event_row
@@ -64,6 +72,40 @@ class RunApprovalContext:
     )
 
 
+@dataclass(frozen=True)
+class CreatedApprovalBatch:
+    id: str
+    request_id: str
+    event_id: int
+    decision_future: asyncio.Future[DecisionMap]
+
+
+@dataclass(frozen=True)
+class _CreatedApprovalGroup:
+    id: str
+    event_id: int
+    decision_future: asyncio.Future[DecisionMap]
+
+
+@dataclass(frozen=True)
+class _PendingApprovalRequest:
+    id: str
+    tool_invocation_id: str
+    tool_name: str
+    tool_input: dict[str, Any]
+
+
+@dataclass
+class _PendingApprovalGroup:
+    key: ApprovalGroupKey
+    run_context: RunApprovalContext
+    requests: list[_PendingApprovalRequest]
+    batch_future: asyncio.Future[_CreatedApprovalGroup]
+    decision_future: asyncio.Future[DecisionMap]
+    batch_id: str | None = None
+    emit_task: asyncio.Task[Any] | None = None
+
+
 def build_can_use_tool(run_context: RunApprovalContext):
     async def can_use_tool(
         tool_name: str,
@@ -80,31 +122,18 @@ def build_can_use_tool(run_context: RunApprovalContext):
             tool_invocation_id=context.tool_use_id
             or run_context.dependencies.id_factory(),
         )
-        future = register_approval_future(
-            batch.id,
-            asyncio.get_running_loop().create_future(),
-        )
         run_context.dependencies.notify_run_event(
             run_context.run_id,
             batch.event_id,
         )
 
-        try:
-            decisions = await future
-        finally:
-            _approval_futures.pop(batch.id, None)
+        decisions = await batch.decision_future
 
-        if all(decision == "approve" for decision in decisions.values()):
+        if decisions.get(batch.request_id) == "approve":
             return PermissionResultAllow(updated_input=tool_input)
         return PermissionResultDeny(message="Tool execution rejected by user")
 
     return can_use_tool
-
-
-@dataclass(frozen=True)
-class CreatedApprovalBatch:
-    id: str
-    event_id: int
 
 
 async def create_and_emit_approval_required(
@@ -115,40 +144,104 @@ async def create_and_emit_approval_required(
     tool_invocation_id: str,
 ) -> CreatedApprovalBatch:
     deps = run_context.dependencies
+    request = _PendingApprovalRequest(
+        id=deps.id_factory(),
+        tool_invocation_id=tool_invocation_id,
+        tool_name=tool_name,
+        tool_input=tool_input,
+    )
+    group = _get_or_create_pending_approval_group(run_context)
+    if group.batch_future.done():
+        created = await _append_and_emit_approval_request(group, request)
+    else:
+        group.requests.append(request)
+        created = await group.batch_future
+
+    return CreatedApprovalBatch(
+        id=created.id,
+        request_id=request.id,
+        event_id=created.event_id,
+        decision_future=created.decision_future,
+    )
+
+
+def _get_or_create_pending_approval_group(
+    run_context: RunApprovalContext,
+) -> _PendingApprovalGroup:
+    key = (run_context.run_id, run_context.message_id)
+    existing_group = _pending_approval_groups.get(key)
+    if (
+        existing_group is not None
+        and not existing_group.decision_future.done()
+    ):
+        return existing_group
+
+    loop = asyncio.get_running_loop()
+    group = _PendingApprovalGroup(
+        key=key,
+        run_context=run_context,
+        requests=[],
+        batch_future=loop.create_future(),
+        decision_future=loop.create_future(),
+    )
+    _pending_approval_groups[key] = group
+    group.emit_task = loop.create_task(_emit_pending_approval_group(group))
+    return group
+
+
+async def _emit_pending_approval_group(group: _PendingApprovalGroup) -> None:
+    try:
+        await asyncio.sleep(_APPROVAL_GROUPING_DELAY_SECONDS)
+        created = await _persist_and_emit_approval_group(group)
+        group.batch_id = created.id
+        if not group.batch_future.done():
+            group.batch_future.set_result(created)
+    except Exception as exc:
+        if not group.batch_future.done():
+            group.batch_future.set_exception(exc)
+
+
+async def _persist_and_emit_approval_group(
+    group: _PendingApprovalGroup,
+) -> _CreatedApprovalGroup:
+    deps = group.run_context.dependencies
     now = deps.now_factory()
     batch_id = deps.id_factory()
-    request_id = deps.id_factory()
     part_id = deps.id_factory()
+    register_approval_future(batch_id, group.decision_future)
 
     batch_model = ApprovalBatchModel(
         id=batch_id,
-        run_id=run_context.run_id,
-        message_id=run_context.message_id,
+        run_id=group.run_context.run_id,
+        message_id=group.run_context.message_id,
         status="pending",
         expires_at=now + timedelta(minutes=30),
         created_at=now,
     )
-    request_model = ApprovalRequestModel(
-        id=request_id,
-        approval_batch_id=batch_id,
-        tool_invocation_id=tool_invocation_id,
-        tool_name=tool_name,
-        args=tool_input,
-        decision="pending",
-        created_at=now,
-    )
+    request_models = [
+        ApprovalRequestModel(
+            id=request.id,
+            approval_batch_id=batch_id,
+            tool_invocation_id=request.tool_invocation_id,
+            tool_name=request.tool_name,
+            args=request.tool_input,
+            decision="pending",
+            created_at=now,
+        )
+        for request in group.requests
+    ]
 
     async with deps.async_session_factory() as session:
         batch = await deps.create_approval_batch(
             session,
             batch=batch_model,
-            requests=[request_model],
+            requests=request_models,
         )
         projected = project_approval_batch(batch)
         event = ApprovalRequiredEvent(
             type="approval_required",
-            run_id=run_context.run_id,
-            message_id=run_context.message_id,
+            run_id=group.run_context.run_id,
+            message_id=group.run_context.message_id,
             part=ApprovalTimelinePart(
                 id=part_id,
                 type="approval",
@@ -158,19 +251,75 @@ async def create_and_emit_approval_required(
         )
         await deps.update_run_status(
             session,
-            run_id=run_context.run_id,
+            run_id=group.run_context.run_id,
             status="awaiting_approval",
         )
         row = run_events.build_run_event_row(
-            run_id=run_context.run_id,
-            conversation_id=run_context.conversation_id,
-            message_id=run_context.message_id,
+            run_id=group.run_context.run_id,
+            conversation_id=group.run_context.conversation_id,
+            message_id=group.run_context.message_id,
             event=event,
         )
         persisted = await deps.append_run_event_row(session, event=row)
         await session.commit()
 
-    return CreatedApprovalBatch(id=batch_id, event_id=int(persisted.id))
+    return _CreatedApprovalGroup(
+        id=batch_id,
+        event_id=int(persisted.id),
+        decision_future=group.decision_future,
+    )
+
+
+async def _append_and_emit_approval_request(
+    group: _PendingApprovalGroup,
+    request: _PendingApprovalRequest,
+) -> _CreatedApprovalGroup:
+    deps = group.run_context.dependencies
+    created = await group.batch_future
+    batch_id = group.batch_id or created.id
+    part_id = deps.id_factory()
+    request_model = ApprovalRequestModel(
+        id=request.id,
+        approval_batch_id=batch_id,
+        tool_invocation_id=request.tool_invocation_id,
+        tool_name=request.tool_name,
+        args=request.tool_input,
+        decision="pending",
+        created_at=deps.now_factory(),
+    )
+
+    async with deps.async_session_factory() as session:
+        batch = await deps.append_approval_request_to_batch(
+            session,
+            batch_id=batch_id,
+            request=request_model,
+        )
+        projected = project_approval_batch(batch)
+        event = ApprovalRequiredEvent(
+            type="approval_required",
+            run_id=group.run_context.run_id,
+            message_id=group.run_context.message_id,
+            part=ApprovalTimelinePart(
+                id=part_id,
+                type="approval",
+                batch=projected,
+            ),
+            approval_batch=projected,
+        )
+        row = run_events.build_run_event_row(
+            run_id=group.run_context.run_id,
+            conversation_id=group.run_context.conversation_id,
+            message_id=group.run_context.message_id,
+            event=event,
+        )
+        persisted = await deps.append_run_event_row(session, event=row)
+        await session.commit()
+
+    return _CreatedApprovalGroup(
+        id=batch_id,
+        event_id=int(persisted.id),
+        decision_future=group.decision_future,
+    )
 
 
 async def submit_approval_decisions(
@@ -215,9 +364,10 @@ async def submit_approval_decisions(
         persisted = await deps.append_run_event_row(session, event=row)
         await session.commit()
 
-    future = _approval_futures.get(batch_id)
+    future = _approval_futures.pop(batch_id, None)
     if future is not None and not future.done():
         future.set_result(decisions)
+    _clear_pending_approval_group_for_batch(batch_id)
     deps.notify_run_event(batch.run_id, int(persisted.id))
 
     async for frame in deps.stream_run_events(batch.run_id, req.after_event_id):
@@ -228,8 +378,18 @@ def register_approval_future(
     batch_id: str,
     future: asyncio.Future[DecisionMap],
 ) -> asyncio.Future[DecisionMap]:
+    existing_future = _approval_futures.get(batch_id)
+    if existing_future is not None and not existing_future.done():
+        return existing_future
+
     _approval_futures[batch_id] = future
     return future
+
+
+def _clear_pending_approval_group_for_batch(batch_id: str) -> None:
+    for key, group in list(_pending_approval_groups.items()):
+        if group.batch_id == batch_id:
+            _pending_approval_groups.pop(key, None)
 
 
 def clear_approval_futures() -> None:
@@ -237,6 +397,12 @@ def clear_approval_futures() -> None:
         if not future.done():
             future.cancel()
     _approval_futures.clear()
+    for group in list(_pending_approval_groups.values()):
+        if group.emit_task is not None and not group.emit_task.done():
+            group.emit_task.cancel()
+        if not group.batch_future.done():
+            group.batch_future.cancel()
+    _pending_approval_groups.clear()
 
 
 def project_approval_batch(batch: Any) -> ApprovalBatch:

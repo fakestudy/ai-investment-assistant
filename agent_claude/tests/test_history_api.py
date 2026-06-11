@@ -89,6 +89,7 @@ class HistoryProjectionTest(unittest.TestCase):
                         "content": "hello",
                         "toolInvocations": [],
                         "timelineParts": [],
+                        "timelineItems": [],
                         "status": "done",
                         "createdAt": "2026-06-08T04:00:00Z",
                     }
@@ -573,6 +574,110 @@ class HistoryProjectionTest(unittest.TestCase):
             "tool-1",
         )
         self.assertNotIn("activeRun", payload)
+
+    def test_projects_pending_approvals_as_tool_timeline_items(self) -> None:
+        created_at = datetime(2026, 6, 8, 4, 0, tzinfo=UTC)
+        web_invocation = SimpleNamespace(
+            id="tool-web",
+            message_id="assistant-1",
+            tool_name="WebSearch",
+            args={"query": "腾讯控股 财报 回购"},
+            result=None,
+            error=None,
+            latency_ms=None,
+            status="awaiting_approval",
+            created_at=created_at,
+        )
+        fetch_invocation = SimpleNamespace(
+            id="tool-fetch",
+            message_id="assistant-1",
+            tool_name="FetchUrl",
+            args={"url": "https://www.tencent.com/ir/announcements"},
+            result=None,
+            error=None,
+            latency_ms=None,
+            status="awaiting_approval",
+            created_at=created_at,
+        )
+        message = SimpleNamespace(
+            id="assistant-1",
+            conversation_id="conversation-1",
+            role="assistant",
+            content="",
+            reasoning="Need evidence.",
+            status="streaming",
+            created_at=created_at,
+            tool_invocations=[web_invocation, fetch_invocation],
+            timeline_parts=[
+                SimpleNamespace(
+                    id="part-reasoning",
+                    type="reasoning",
+                    order_index=0,
+                    text="Need evidence.",
+                    tool_invocation_id=None,
+                ),
+                SimpleNamespace(
+                    id="part-web",
+                    type="tool",
+                    order_index=1,
+                    text="",
+                    tool_invocation_id="tool-web",
+                ),
+                SimpleNamespace(
+                    id="part-fetch",
+                    type="tool",
+                    order_index=2,
+                    text="",
+                    tool_invocation_id="tool-fetch",
+                ),
+            ],
+        )
+        active_run = {
+            "runId": "run-1",
+            "status": "awaiting_approval",
+            "lastEventId": 42,
+            "assistantMessageId": "assistant-1",
+            "approvalBatch": {
+                "id": "batch-1",
+                "status": "pending",
+                "expiresAt": "2026-06-08T04:30:00Z",
+                "requests": [
+                    {
+                        "id": "request-web",
+                        "toolInvocationId": "tool-web",
+                        "toolName": "WebSearch",
+                        "args": {"query": "腾讯控股 财报 回购"},
+                        "decision": "pending",
+                    },
+                    {
+                        "id": "request-fetch",
+                        "toolInvocationId": "tool-fetch",
+                        "toolName": "FetchUrl",
+                        "args": {"url": "https://www.tencent.com/ir/announcements"},
+                        "decision": "pending",
+                    },
+                ],
+            },
+        }
+
+        response = project_conversation_messages([message], active_run=active_run)
+        payload = response.model_dump(by_alias=True, exclude_none=True)
+        timeline_items = payload["messages"][0]["timelineItems"]
+
+        self.assertEqual(
+            [item["type"] for item in timeline_items],
+            ["thought", "tool", "tool"],
+        )
+        tool_items = [item for item in timeline_items if item["type"] == "tool"]
+        self.assertEqual(
+            [item["invocation"]["id"] for item in tool_items],
+            ["tool-web", "tool-fetch"],
+        )
+        self.assertEqual(
+            [item["approval"]["requestId"] for item in tool_items],
+            ["request-web", "request-fetch"],
+        )
+        self.assertNotIn("approval", [item["type"] for item in timeline_items])
 
     def test_projection_skips_tool_parts_without_matching_invocation(self) -> None:
         message = SimpleNamespace(

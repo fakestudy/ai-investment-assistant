@@ -69,6 +69,30 @@ export type ChatTimelinePart =
 			batch: ApprovalBatch;
 	  };
 
+export type ToolApprovalState = {
+	batchId: string;
+	requestId: string;
+	status: ApprovalBatch["status"];
+	decision: ApprovalDecision;
+	expiresAt?: string;
+	decidedAt?: string;
+};
+
+export type RunTimelineItem =
+	| {
+			id: string;
+			type: "thought";
+			orderIndex?: number;
+			text: string;
+	  }
+	| {
+			id: string;
+			type: "tool";
+			orderIndex?: number;
+			invocation: ToolInvocation;
+			approval?: ToolApprovalState;
+	  };
+
 export type ChatMessage = {
 	id: string;
 	conversationId: string;
@@ -77,6 +101,7 @@ export type ChatMessage = {
 	reasoning?: string;
 	toolInvocations?: ToolInvocation[];
 	timelineParts?: ChatTimelinePart[];
+	timelineItems?: RunTimelineItem[];
 	status?: MessageStatus;
 	createdAt: string;
 };

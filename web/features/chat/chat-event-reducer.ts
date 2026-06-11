@@ -1,12 +1,13 @@
 import {
 	appendReasoningTimelinePart,
+	appendThoughtTimelineItem,
 	resetStreamCreatedMessage,
+	upsertApprovalBatchIntoTimelineItems,
+	upsertToolTimelineItem,
 	upsertToolTimelinePart,
 } from "./chat-ui-state";
 import type {
-	ApprovalBatch,
 	ChatMessage,
-	ChatTimelinePart,
 	ConversationRunState,
 	ReceivedChatStreamEvent,
 	ToolInvocation,
@@ -24,32 +25,6 @@ const withCursor = (
 	activeRun && eventId !== undefined
 		? { ...activeRun, lastEventId: eventId }
 		: activeRun;
-
-const upsertApprovalPart = (
-	parts: ChatTimelinePart[] | undefined,
-	nextPart: Extract<ChatTimelinePart, { type: "approval" }>,
-) => {
-	const currentParts = parts ?? [];
-	const partIndex = currentParts.findIndex((part) => part.id === nextPart.id);
-
-	if (partIndex === -1) {
-		return [...currentParts, nextPart];
-	}
-
-	return currentParts.map((part, index) =>
-		index === partIndex ? nextPart : part,
-	);
-};
-
-const updateApprovalBatch = (
-	parts: ChatTimelinePart[] | undefined,
-	batch: ApprovalBatch,
-) =>
-	parts?.map((part) =>
-		part.type === "approval" && part.batch.id === batch.id
-			? { ...part, batch }
-			: part,
-	);
 
 const appendText = (
 	messages: ChatMessage[],
@@ -118,7 +93,7 @@ const upsertToolInvocation = (
 const createReasoningPartId = (
 	messageId: string,
 	eventId: number | undefined,
-	parts: ChatTimelinePart[] | undefined,
+	parts: readonly unknown[] | undefined,
 ) => `reasoning-${eventId ?? `${messageId}-${parts?.length ?? 0}`}`;
 
 export function reduceChatStreamEvent(
@@ -182,6 +157,14 @@ export function reduceChatStreamEvent(
 					),
 					text: event.text,
 				}),
+				timelineItems: appendThoughtTimelineItem(message.timelineItems, {
+					id: createReasoningPartId(
+						event.messageId,
+						eventId,
+						message.timelineItems,
+					),
+					text: event.text,
+				}),
 				status: "streaming",
 			})),
 			activeRun: withCursor(state.activeRun, eventId),
@@ -201,6 +184,10 @@ export function reduceChatStreamEvent(
 					message.timelineParts,
 					event.invocation,
 				),
+				timelineItems: upsertToolTimelineItem(
+					message.timelineItems,
+					event.invocation,
+				),
 				status: "streaming",
 			})),
 			activeRun: withCursor(state.activeRun, eventId),
@@ -214,9 +201,13 @@ export function reduceChatStreamEvent(
 				message.id === event.messageId
 					? {
 							...message,
-							timelineParts: upsertApprovalPart(
-								message.timelineParts,
-								event.part,
+							timelineItems: upsertApprovalBatchIntoTimelineItems(
+								message.timelineItems,
+								event.part.batch,
+								{
+									messageId: event.messageId,
+									orderIndex: event.part.orderIndex,
+								},
 							),
 							status: "streaming",
 						}
@@ -236,10 +227,19 @@ export function reduceChatStreamEvent(
 	if (event.type === "approval_resolved") {
 		return {
 			...state,
-			messages: state.messages.map((message) => ({
-				...message,
-				timelineParts: updateApprovalBatch(message.timelineParts, event.batch),
-			})),
+			messages: state.messages.map((message) =>
+				message.id ===
+				(state.activeRun?.assistantMessageId ?? state.messages[0]?.id ?? "")
+					? {
+							...message,
+							timelineItems: upsertApprovalBatchIntoTimelineItems(
+								message.timelineItems,
+								event.batch,
+								{ messageId: message.id },
+							),
+						}
+					: message,
+			),
 			activeRun: {
 				runId: event.runId,
 				assistantMessageId:

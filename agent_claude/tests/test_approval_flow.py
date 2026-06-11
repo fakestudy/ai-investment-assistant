@@ -194,6 +194,182 @@ class ApprovalGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.appended_events[-1].event_type, "approval_resolved")
         self.assertIn('"approval_resolved"', "".join(frames))
 
+    async def test_concurrent_required_tools_share_one_approval_batch(
+        self,
+    ) -> None:
+        from schema.chat import ApprovalDecisionsRequest
+        from service.approval_gate import (
+            RunApprovalContext,
+            build_can_use_tool,
+            submit_approval_decisions,
+        )
+
+        session = _ApprovalSession()
+        hook = build_can_use_tool(
+            RunApprovalContext(
+                run_id="run-1",
+                conversation_id="conversation-1",
+                message_id="assistant-1",
+                approval_required_tools=("WebFetch",),
+                dependencies=_approval_dependencies(session),
+            )
+        )
+
+        pending = [
+            asyncio.create_task(
+                hook(
+                    "WebFetch",
+                    {"url": f"https://example.com/{index}"},
+                    ToolPermissionContext(tool_use_id=f"tool-{index}"),
+                )
+            )
+            for index in range(1, 4)
+        ]
+
+        try:
+            await _wait_for(
+                lambda: sum(
+                    len(batch.requests) for batch in session.created_batches
+                )
+                == 3
+            )
+
+            self.assertEqual(len(session.created_batches), 1)
+            created_batch = session.created_batches[0]
+            self.assertEqual(
+                [request.tool_invocation_id for request in created_batch.requests],
+                ["tool-1", "tool-2", "tool-3"],
+            )
+            self.assertEqual(len(session.appended_events), 1)
+            self.assertEqual(session.appended_events[0].event_type, "approval_required")
+            self.assertEqual(
+                len(session.appended_events[0].payload["part"]["batch"]["requests"]),
+                3,
+            )
+
+            _ = [
+                frame
+                async for frame in submit_approval_decisions(
+                    created_batch.id,
+                    ApprovalDecisionsRequest.model_validate(
+                        {
+                            "decisions": [
+                                {
+                                    "approvalRequestId": request.id,
+                                    "decision": "approve",
+                                }
+                                for request in created_batch.requests
+                            ],
+                            "afterEventId": 1,
+                        }
+                    ),
+                    dependencies=_approval_dependencies(session),
+                )
+            ]
+            results = await asyncio.gather(
+                *[asyncio.wait_for(task, timeout=1) for task in pending]
+            )
+
+            self.assertTrue(
+                all(isinstance(result, PermissionResultAllow) for result in results)
+            )
+        finally:
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def test_later_required_tool_appends_to_existing_pending_batch(
+        self,
+    ) -> None:
+        from schema.chat import ApprovalDecisionsRequest
+        from service.approval_gate import (
+            RunApprovalContext,
+            build_can_use_tool,
+            submit_approval_decisions,
+        )
+
+        session = _ApprovalSession()
+        hook = build_can_use_tool(
+            RunApprovalContext(
+                run_id="run-1",
+                conversation_id="conversation-1",
+                message_id="assistant-1",
+                approval_required_tools=("WebFetch",),
+                dependencies=_approval_dependencies(session),
+            )
+        )
+
+        first = asyncio.create_task(
+            hook(
+                "WebFetch",
+                {"url": "https://example.com/1"},
+                ToolPermissionContext(tool_use_id="tool-1"),
+            )
+        )
+
+        try:
+            await _wait_for(
+                lambda: len(session.created_batches) == 1
+                and len(session.created_batches[0].requests) == 1
+            )
+
+            second = asyncio.create_task(
+                hook(
+                    "WebFetch",
+                    {"url": "https://example.com/2"},
+                    ToolPermissionContext(tool_use_id="tool-2"),
+                )
+            )
+            await _wait_for(lambda: len(session.created_batches[0].requests) == 2)
+
+            created_batch = session.created_batches[0]
+            self.assertEqual(len(session.created_batches), 1)
+            self.assertEqual(
+                [request.tool_invocation_id for request in created_batch.requests],
+                ["tool-1", "tool-2"],
+            )
+            self.assertEqual(
+                len(session.appended_events[-1].payload["part"]["batch"]["requests"]),
+                2,
+            )
+
+            _ = [
+                frame
+                async for frame in submit_approval_decisions(
+                    created_batch.id,
+                    ApprovalDecisionsRequest.model_validate(
+                        {
+                            "decisions": [
+                                {
+                                    "approvalRequestId": request.id,
+                                    "decision": "approve",
+                                }
+                                for request in created_batch.requests
+                            ],
+                            "afterEventId": 1,
+                        }
+                    ),
+                    dependencies=_approval_dependencies(session),
+                )
+            ]
+            results = await asyncio.gather(
+                asyncio.wait_for(first, timeout=1),
+                asyncio.wait_for(second, timeout=1),
+            )
+
+            self.assertTrue(
+                all(isinstance(result, PermissionResultAllow) for result in results)
+            )
+        finally:
+            for task in (first, locals().get("second")):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *[task for task in (first, locals().get("second")) if task is not None],
+                return_exceptions=True,
+            )
+
     async def test_required_tool_denies_after_reject_decision(self) -> None:
         from schema.chat import ApprovalDecisionsRequest
         from service.approval_gate import (
@@ -373,6 +549,13 @@ def _approval_dependencies(session: _ApprovalSession):
         db_session.operations.append("create_batch")
         return batch
 
+    async def fake_append_approval_request_to_batch(db_session, *, batch_id, request):
+        batch = db_session.batches[batch_id]
+        request.approval_batch_id = batch_id
+        batch.requests.append(request)
+        db_session.operations.append("append_request")
+        return batch
+
     async def fake_resolve_approval_batch(db_session, *, batch_id, decisions):
         batch = db_session.batches[batch_id]
         db_session.resolved_decisions = dict(decisions)
@@ -405,6 +588,7 @@ def _approval_dependencies(session: _ApprovalSession):
     return ApprovalGateDependencies(
         async_session_factory=_ApprovalSessionFactory(session),
         create_approval_batch=fake_create_approval_batch,
+        append_approval_request_to_batch=fake_append_approval_request_to_batch,
         resolve_approval_batch=fake_resolve_approval_batch,
         update_run_status=fake_update_run_status,
         append_run_event_row=fake_append_run_event_row,

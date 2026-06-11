@@ -91,6 +91,7 @@ class MessageEditApiTest(unittest.TestCase):
                 "content": "updated question",
                 "toolInvocations": [],
                 "timelineParts": [],
+                "timelineItems": [],
                 "status": "done",
                 "createdAt": "2026-06-09T00:01:00Z",
             },
